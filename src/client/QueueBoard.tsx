@@ -8,7 +8,7 @@ import { DEFAULT_SETTINGS, UNRESOLVED, type Task } from '../queue.ts'
 import type { viewStore } from './store.ts'
 import type { Coordinator } from './coordinator.ts'
 
-type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open'> & {refresh: () => Promise<void>}
+type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open' | 'discover' | 'resumeGoal' | 'setConcurrency'> & {refresh: () => Promise<void>}
 export type BoardProps = PropsStore<typeof viewStore> & PropsRuntime<'shell.overlay'> &
   PropsHooks<{queueSettings: QueueSettingsSource, workspaces: {
     getSnapshot():WorkspaceSnapshot;subscribe(listener:()=>void):()=>void
@@ -32,12 +32,20 @@ export function QueueBoard(props:BoardProps) {
   const [prompt,setPrompt] = useState('')
   const [goalMode,setGoalMode] = useState(true)
   const [submitting,setSubmitting] = useState(false)
+  const [discovering,setDiscovering] = useState(false)
   useEffect(()=>{
     if (!open) return
     const onKey = (e:KeyboardEvent)=>{if(e.key==='Escape')props.actions.close()}
     window.addEventListener('keydown',onKey)
     return ()=>window.removeEventListener('keydown',onKey)
   },[open,props.actions])
+  useEffect(()=>{
+    if(!open || loadingState.status!=='ready')return
+    let alive=true
+    setDiscovering(true)
+    void props.operations.discover().catch(e=>props.actions.error(message(e))).finally(()=>{if(alive)setDiscovering(false)})
+    return ()=>{alive=false}
+  },[open,loadingState.status])
   if(!open) return null
   // Errors must never be misrepresented as a real empty queue. Mutations are not mounted
   // until a fresh, validated Host configuration snapshot has arrived.
@@ -72,12 +80,16 @@ export function QueueBoard(props:BoardProps) {
     }catch(e){props.actions.error(message(e))}
     finally{setSubmitting(false)}
   }
-  const busy = q.activeId !== null
+  const busy = q.activeIds.length > 0
   return createPortal(<div className="gq-root" role="dialog" aria-modal="true" aria-label="DSH 任务队列">
     <header className="gq-head">
-      <div><h1>DSH Goal Queue</h1><span>跨工作区串行任务 · {q.tasks.filter(t=>t.status==='pending').length} 项待执行</span></div>
+      <div><h1>DSH 任务队列</h1><span>跨工作区任务 · {q.tasks.filter(t=>t.status==='pending').length} 项待执行</span></div>
       <div className="gq-actions">
         <button type="button" onClick={newForm}>添加任务</button>
+        <button type="button" disabled={discovering} onClick={()=>{setDiscovering(true);void change(()=>props.operations.discover().then(()=>{})).finally(()=>setDiscovering(false))}}>{discovering?'扫描中…':'刷新运行任务'}</button>
+        <label>最大并发 <select aria-label="最大并发任务数" value={q.maxConcurrent} onChange={e=>{void change(()=>props.operations.setConcurrency(Number(e.target.value)))}}>
+          {Array.from({length:8},(_,i)=>i+1).map(n=><option key={n} value={n}>{n}</option>)}
+        </select></label>
         <button type="button" className={q.enabled?'gq-warn':'gq-primary'} disabled={!q.enabled && blockers.length>0} onClick={()=>{void change(()=>props.operations.enable(!q.enabled))}}>
           {q.enabled?'暂停队列':'启动队列'}
         </button>
@@ -85,8 +97,9 @@ export function QueueBoard(props:BoardProps) {
       </div>
     </header>
     <div className="gq-notes">
-      {q.enabled?'队列已启用：每次仅派发一项任务。':'队列已暂停：不会启动下一项；已有任务不会被中断。'}
-      {busy?' 当前执行槽已占用。':''}
+      {q.enabled?'队列已启用：按并发上限派发任务。':'队列已暂停：不会启动下一项；已有任务不会被中断。'}
+      {busy?` 当前有 ${q.activeIds.length} 项运行／观察任务，最大并发 ${q.maxConcurrent}。`:''}
+      {q.activeIds.length>q.maxConcurrent&&<div className="gq-error">发现的运行任务已超过并发上限；不会强制结束已有 Session，也不会派发新任务。</div>}
       {blockers.length>0 && <div className="gq-error" role="alert">有 {blockers.length} 项异常任务尚未处理，已禁止启动后续任务。先查看旧 Session，明确选择重新排队或人工跳过。</div>}
       <div>目标模式以 DSH Goal 的 complete / blocked 为准；普通模式以已观察到的运行→空闲为准，不代表代码已通过人工验收。</div>
     </div>
@@ -94,25 +107,26 @@ export function QueueBoard(props:BoardProps) {
     {error && <div className="gq-error" role="alert">操作失败：{error}</div>}
     <main className="gq-list">
       {q.tasks.length===0?<div className="gq-empty">队列为空。添加任务并选择工作区，随后点击启动队列。</div>:q.tasks.map((task,i)=>{
-        const editable = task.status==='pending'
+        const editable = task.status==='pending' && task.source!=='discovered'
         return <article className="gq-task" key={task.id} data-status={task.status}>
           <div className="gq-task-top">
             <span className="gq-order">{i+1}</span>
             <div className="gq-desc">
-              <strong>{task.title}</strong>
+              <strong>{task.title || (task.goalMode ? '未命名目标任务' : '等待 DSH 自动生成标题')}</strong>
               <small>{workspaces.items.find(w=>w.workspaceId===task.workspaceId)?.title??task.workspaceId}</small>
             </div>
-            <span className="gq-pill">{task.goalMode?'目标模式 /goal':'普通模式'}</span>
+            <span className="gq-pill">{task.source==='discovered'?'DPH 原有任务':task.goalMode?'目标模式 /goal':'普通模式'}</span>
             <span className="gq-pill" data-status={task.status}>{labels[task.status]}</span>
           </div>
-          <p className="gq-prompt">{task.prompt}</p>
+          <p className="gq-prompt">{task.prompt||'已纳入 DPH 现有 Session；无需重新提交指令'}</p>
           {task.detail&&<p className="gq-detail">{task.detail}</p>}
           <div className="gq-task-controls">
             <button type="button" disabled={!editable||!q.tasks.slice(0,i).some(t=>t.status==='pending')} onClick={()=>{void change(()=>props.operations.move(task.id,-1))}}>上移</button>
             <button type="button" disabled={!editable||!q.tasks.slice(i+1).some(t=>t.status==='pending')} onClick={()=>{void change(()=>props.operations.move(task.id,1))}}>下移</button>
             <button type="button" disabled={!editable} onClick={()=>editForm(task)}>编辑</button>
-            <button type="button" disabled={task.id===q.activeId||UNRESOLVED.includes(task.status)} onClick={()=>{void change(()=>props.operations.remove(task.id))}}>删除</button>
+            <button type="button" disabled={q.activeIds.includes(task.id)||UNRESOLVED.includes(task.status)} onClick={()=>{void change(()=>props.operations.remove(task.id))}}>删除</button>
             {task.sessionId&&<button type="button" onClick={()=>{props.operations.open(task.id);props.actions.close()}}>打开 Session</button>}
+            {task.status==='interrupted'&&task.goalMode&&task.sessionId&&<button type="button" onClick={()=>{if(!window.confirm('将在原 Session 内执行 /goal resume；请确认先前的执行已经停止。'))return;void change(()=>props.operations.resumeGoal(task.id))}}>激活旧 Goal</button>}
             {UNRESOLVED.includes(task.status)&&<button type="button" onClick={()=>{
               if(!window.confirm('重新排队将创建新的 Session。请先确认旧 Session 已停止，防止重复修改代码。'))return
               void change(()=>props.operations.retry(task.id))
@@ -128,14 +142,14 @@ export function QueueBoard(props:BoardProps) {
     {editing!==null&&<div className="gq-modal-backdrop" onMouseDown={(e)=>{if(e.target===e.currentTarget)setEditing(null)}}>
       <form className="gq-modal" onSubmit={e=>{void onSave(e)}}>
         <h2>{editing==='new'?'添加任务':'编辑待执行任务'}</h2>
-        <label>任务标题<input required maxLength={200} value={title} onChange={e=>setTitle(e.target.value)} placeholder="例如：实现登录模块" /></label>
+        <label>任务标题（可留空）<input maxLength={200} value={title} onChange={e=>setTitle(e.target.value)} placeholder="可选，留空时普通模式沿用 DSH 自动标题" /></label>
         <label>执行工作区<select required value={workspaceId} onChange={e=>setWorkspaceId(e.target.value)}>
           <option value="">选择工作区</option>
           {workspaces.items.map(w=><option key={w.workspaceId} value={w.workspaceId}>{w.title} — {w.path}</option>)}
         </select></label>
         <label className="gq-check"><input type="checkbox" checked={goalMode} onChange={e=>setGoalMode(e.target.checked)}/> 使用 DSH 原生目标模式（/goal）</label>
         <label>任务说明<textarea required value={prompt} onChange={e=>setPrompt(e.target.value)} rows={7} placeholder="说明任务、约束和验收标准"/></label>
-        <p>目标模式将说明作为一个 Goal 创建；普通模式只执行一轮普通任务。每项任务创建独立 Session。</p>
+        <p>标题可留空；普通任务由 DSH 原生标题服务生成。纯 /goal 不产生首条普通用户消息，暂不保证自动生成模型标题；不发送额外指令避免重复执行。每项新任务建立独立 Session。</p>
         <footer><button type="button" onClick={()=>setEditing(null)}>取消</button><button className="gq-primary" disabled={submitting||!workspaceId} type="submit">保存</button></footer>
       </form>
     </div>}
