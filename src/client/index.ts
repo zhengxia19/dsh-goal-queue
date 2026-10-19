@@ -18,7 +18,7 @@ import { QueueButton } from './QueueButton.tsx'
 import { styles } from './styles.ts'
 import { HostTaskModels } from './models.ts'
 
-export const inject = ['slots','sessions','workspaces','uiWorkspace','connection','remote','remote.settings']
+export const inject = ['slots','sessions','workspaces','uiWorkspace','connection','remote','remote.settings','remote.session','remote.commands']
 export function apply(ctx: Context): void {
   const connection = ctx.get('connection') as ConnectionHandle
   const settings = new HostQueueSettings(ctx)
