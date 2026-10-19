@@ -37,7 +37,7 @@ export function decode(value:unknown):QueueSettings|undefined {
     if(!object(raw)||typeof raw.id!=='string'||!raw.id||ids.has(raw.id)
       ||typeof raw.workspaceId!=='string'||typeof raw.title!=='string'||typeof raw.prompt!=='string'
       ||typeof raw.goalMode!=='boolean'||!STATES.includes(raw.status as TaskStatus)
-      ||!Number.isFinite(raw.createdAt)||!Number.isFinite(raw.updatedAt)
+      ||typeof raw.createdAt!=='number'||!Number.isFinite(raw.createdAt)\n      ||typeof raw.updatedAt!=='number'||!Number.isFinite(raw.updatedAt)
       ||(raw.source!==undefined&&raw.source!=='queue'&&raw.source!=='discovered')
       ||(raw.sessionId!==undefined&&typeof raw.sessionId!=='string')
       ||(raw.goalId!==undefined&&typeof raw.goalId!=='string')
@@ -50,7 +50,7 @@ export function decode(value:unknown):QueueSettings|undefined {
     ids.add(raw.id);tasks.push(raw as unknown as Task)
   }
   const running=tasks.filter(active).map(t=>t.id)
-  const slots=q.activeIds===undefined?(q.activeId?[q.activeId]:running):q.activeIds
+  const slots=q.activeIds===undefined||(Array.isArray(q.activeIds)&&q.activeIds.length===0&&q.activeId)\n    ?(q.activeId?[q.activeId]:running):q.activeIds
   if(!Array.isArray(slots)||slots.some(x=>typeof x!=='string')
     ||new Set(slots).size!==slots.length||slots.length!==running.length
     ||running.some(x=>!slots.includes(x)))return
