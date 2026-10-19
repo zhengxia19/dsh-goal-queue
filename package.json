@@ -47,6 +47,7 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
+    "pretest": "npm run build",
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "prepare": "npm run build"
   },

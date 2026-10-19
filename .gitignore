@@ -1,6 +1,9 @@
 node_modules/
 lib/
+dist/
 .artifacts/
 *.tgz
 .DS_Store
 .env
+.local-before-sync.patch
+installation-backup-*/
