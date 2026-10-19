@@ -1,20 +1,22 @@
-# AGENTS.md — DSH Goal Queue
+# AGENTS.md — DSH Goal Queue v0.3.0
 
-此插件为 DPH / DeepSeek Harness Desktop V0.2.1-rc.2 的单客户端跨工作区串行调度器。任何修改必须先遵守以下高优先级约束；不可以构建成功代替真实 Desktop 验收。
+此插件适配 DPH / DeepSeek Harness Desktop V0.2.1-rc.2。修改时必须保持下列高优先级约束，构建成功不能替代 Windows DPH Desktop 实机验收。
 
 ## 不可破坏的规则
 
-1. **默认无启动授权**：每次进程启动、Client 重载和 Host 连接重置后，必须清除进程内派发授权；哪怕 Host 保存 `enabled=true`、`activeId=null`、`pending>0`，也禁止自动派发。只有当前连接中的用户明确“启动队列”才能授权。人工暂停不取消已运行的 Session。
-2. **单项串行**：本队列同时最多一项。该保证不涵盖其他客户端或用户自行运行的 Session；绝不能宣称拥有全局锁。
-3. **不确定则停止**：Host CAS 冲突、写入回包丢失、命令提交状态未知、Session 创建后记账失败、配置加载异常时，禁止派发下一项并保留可检查的异常证据。严禁回退到 `EMPTY_QUEUE` 继续工作。
-4. **异常不能跳过**：存在 `interrupted`、`blocked`、`failed` 项时不允许启动后续 `pending`。必须人工检查旧 Session 后选择重试（创建新 Session）或人工跳过（`skipped`，不代表成功），不能直接删掉未决异常任务。
-5. **Goal 证据**：只接受对应 Goal ID 的原生投影 `complete` + Session 空闲。模型文字、RPC 成功或单纯空闲均不代表 Goal 完成。普通任务必须亲眼观察到 Session running→idle。
-6. **状态所有权**：tasks 与 activeId 必须作为一份队列记录同次 CAS 提交；不要建立第二套 Goal 状态库。执行任务不能编辑身份。保留 Workspace 和历史 Session ID。
-7. **只用受支持接口**：禁止补丁官方 Desktop 内部文件，禁止将未经实测的安装/兼容性描述成已验收。
-8. **先测试后闭环**：故障回归需覆盖重启空闲启用、断连、异常阻断、配置加载/写入失败、请求已提交但响应丢失。`npm test`、`npm run typecheck`、`npm run build`、CI 均通过后，还须完成独立的 T06 实机证据才能宣布可发布。
+1. **无自动续跑**：启动、重连、重载后不授予新任务派发权。仅用户当前 Client 中明确点击「启动队列」才授权派发。已在运行的原 Session 可以自动读取并重新观察，但不重发命令。
+2. **Session ID 去重**：打开管理面板时用 DSH 官方 `sessions.refresh/list/retain` 发现正在运行的 Host Session。不能扫描外部进程，也不得导入 Subagent 作为独立主任务。发现的任务只观察，不自动创建 Prompt / Goal。
+3. **并发名额正确**：`maxConcurrent` 为 1–8 的整数，默认 1；`activeIds` 持久化活动占用集合。新任务派发必须先原子 claim，再确认容量；发现的运行任务占名额。降低上限不结束既有 Session。没有跨 Client / Host 全局锁，不得宣称全局并发保证。
+4. **异常不得跳过**：`interrupted/blocked/failed` 阻断新增派发，必须人工核实旧 Session 后重试、跳过或对符合条件的旧 Goal 明确执行恢复。普通模式不能在状态未知时偷偷重新发 Prompt。
+5. **标题来源真实**：用户标题可以留空；仅同步 DSH Session 列表中的真实 `title`，不能把 `displayTitle` 回退标签误当 LLM 生成标题。纯 `/goal` 不会触发首人类消息标题提供方，不得为取名伪造可执行 Prompt。
+6. **状态所有权与兼容**：保留旧 `activeId` 和 version=1 队列读取兼容，新增 `activeIds/maxConcurrent/source` 必须与任务同一次 CAS 保存。不要抹除历史 Session ID，不得在损坏数据时回退为空队列。Goal 的权威数据只来自 DSH 原生 Goal 投影。
+7. **完成有证据**：Goal 完成须核验同 ID 的 `phase=complete` 且 Session idle；普通模式必须看到 running→idle。模型回答文字与 RPC 成功均不是完成证据，更不是代码验收。
+8. **连接与写入失败停止**：Session 创建、命令提交、配置 CAS 结果未知，必须停止继续派发，显式提示人工核实。不为了消除错误重新发命令。
+9. **验收顺序**：新增故障测试、旧数据迁移测试、Session 去重、并发上限、恢复及空标题测试；`npm test`、`npm run typecheck`、`npm run build`、CI 均通过。最终还须真实 Windows DPH Desktop 多工作区 E2E 证据。
+10. **范围边界**：使用官方公开 DSH Client/Host 接口，禁止补丁 DPH Desktop 内置代码；仅限制插件可见队列任务，不能推断外部 Client 或模型服务总并发。
 
-## 审查资料
+## 参考
 
-- [中文 README](README.zh.md)
-- [独立复审与修订记录](docs/修订复审_2026-10-19.md)
-- [DPH 实机验收清单（T06）](docs/DPH_V0.2.1-rc.2_实机验收清单.md)
+- [中文使用说明](README.zh.md)
+- [本次功能扩展复审](docs/功能扩展复审_2026-10-19.md)
+- [DPH 实机验收清单](docs/DPH_V0.2.1-rc.2_实机验收清单.md)
