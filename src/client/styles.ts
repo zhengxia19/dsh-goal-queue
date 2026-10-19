@@ -1,0 +1,27 @@
+/** Scoped theme-aware CSS for native DSH Desktop/Web shell. */
+export const styles = String.raw`
+.gq-root{position:fixed;inset:0;z-index:1100;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base,#101216);color:var(--dsw-alias-label-primary,#f0f0f0);font:14px system-ui,sans-serif}
+.gq-root *{box-sizing:border-box}.gq-root button,.gq-root input,.gq-root select,.gq-root textarea,.gq-side{font:inherit;color:inherit}
+.gq-root button,.gq-side{border:1px solid var(--dsw-alias-border-l2,#7775);border-radius:7px;background:var(--dsw-alias-bg-layer-2,#333);padding:7px 10px;cursor:pointer}
+.gq-root button:hover,.gq-side:hover{filter:brightness(1.13)}.gq-root button:disabled{opacity:.35;cursor:not-allowed}
+.gq-root input,.gq-root select,.gq-root textarea{border:1px solid var(--dsw-alias-border-l2,#7775);border-radius:7px;background:var(--dsw-specific-input-major,#222);padding:8px;width:100%}
+.gq-root :focus-visible,.gq-side:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#729ffd);outline-offset:2px}
+.gq-head{display:flex;justify-content:space-between;align-items:center;gap:15px;border-bottom:1px solid var(--dsw-alias-border-l1,#7774);padding:17px 22px}
+.gq-head h1{font-size:21px;margin:0}.gq-head span{font-size:12px;color:var(--dsw-alias-label-secondary,#aaa)}
+.gq-actions{display:flex;flex-wrap:wrap;gap:8px}.gq-primary{background:var(--dsw-alias-brand-primary,#3b78d8)!important;color:#fff!important}
+.gq-warn{border-color:var(--dsw-alias-state-warn-primary,#e99a3b)!important}
+.gq-notes{padding:12px 22px;font-size:12px;line-height:1.8;color:var(--dsw-alias-label-secondary,#bbb);border-bottom:1px solid var(--dsw-alias-border-l1,#7774)}
+.gq-error{margin:8px 22px;padding:10px;border:1px solid var(--dsw-alias-state-error-primary,#f77);border-radius:7px;color:var(--dsw-alias-state-error-primary,#f77)}
+.gq-list{overflow:auto;flex:1;padding:16px 22px}.gq-empty{margin:70px auto;text-align:center;max-width:600px;color:var(--dsw-alias-label-secondary,#aaa)}
+.gq-task{border:1px solid var(--dsw-alias-border-l2,#7775);border-radius:10px;margin:0 0 11px;padding:13px 15px;background:var(--dsw-alias-bg-layer-1,#222)}
+.gq-task[data-status=running],.gq-task[data-status=starting]{border-left:4px solid var(--dsw-alias-brand-primary,#6ac)}
+.gq-task[data-status=blocked],.gq-task[data-status=failed]{border-left:4px solid var(--dsw-alias-state-error-primary,#d65)}
+.gq-task-top{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.gq-order{font-weight:750;color:var(--dsw-alias-label-secondary,#aaa);width:20px}
+.gq-desc{display:flex;flex:1;flex-direction:column;gap:3px;min-width:150px}.gq-desc strong{font-size:14px}.gq-desc small{font-size:11px;color:var(--dsw-alias-label-secondary,#aaa)}
+.gq-pill{font-size:11px;padding:4px 7px;background:var(--dsw-alias-bg-layer-3,#444);border-radius:6px}.gq-pill[data-status=completed]{color:var(--dsw-alias-state-success-primary,#7d9)}
+.gq-prompt{margin:10px 0;max-height:92px;overflow:auto;white-space:pre-wrap;color:var(--dsw-alias-label-secondary,#bbb);font-size:12px}
+.gq-detail{font-size:12px;color:var(--dsw-alias-state-warn-label,#dc9)}.gq-task-controls{display:flex;flex-wrap:wrap;gap:7px}
+.gq-task-controls button{font-size:12px}.gq-side{display:flex;align-items:center;min-height:36px;width:100%;margin:4px 0;background:var(--dsw-alias-button-tool-bar-fill,#333)}
+.gq-modal-backdrop{position:absolute;inset:0;z-index:1200;display:grid;place-items:center;padding:20px;background:#0009}.gq-modal{display:flex;flex-direction:column;gap:13px;width:min(600px,100%);max-height:90vh;overflow:auto;border-radius:12px;border:1px solid var(--dsw-alias-border-l2,#7775);padding:20px;background:var(--dsw-alias-bg-layer-1,#222)}
+.gq-modal h2{margin:0}.gq-modal label{font-size:12px;display:flex;flex-direction:column;gap:5px}.gq-modal label.gq-check{flex-direction:row;align-items:center}.gq-check input{width:auto}.gq-modal textarea{resize:vertical}.gq-modal p{font-size:11px;color:var(--dsw-alias-label-secondary,#bbb)}.gq-modal footer{display:flex;justify-content:flex-end;gap:8px}
+`

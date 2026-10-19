@@ -1,0 +1,3 @@
+- insert:
+    - id: goal-queue
+      name: dsh-goal-queue

@@ -1,0 +1,6 @@
+node_modules/
+lib/
+.artifacts/
+*.tgz
+.DS_Store
+.env
