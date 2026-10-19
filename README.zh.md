@@ -1,6 +1,6 @@
 # DSH 任务队列插件 — DPH Desktop V0.2.1-rc.2
 
-> 插件版本：**0.3.0 源码预览版**。当前基于 DSH 官方公开 Client Session API。GitHub CI 的构建、类型检查与模拟测试不代替 Windows DPH Desktop 端到端验收。请在隔离的 Desktop Profile / 测试工作区先行试用。
+> 插件版本：**0.3.1 源码预览版**。当前基于 DSH 官方公开 Client Session API。GitHub CI 的构建、类型检查与模拟测试不代替 Windows DPH Desktop 端到端验收。请在隔离的 Desktop Profile / 测试工作区先行试用。
 
 ## 功能
 
@@ -10,7 +10,7 @@
 - 仍可添加、编辑、删除待执行项，在 DSH 已登记工作区间选择、上移与下移排序。新建任务每项独立创建 Session，并使用普通提示词或原生 `/goal`。
 - 队列**启动／重连后处于暂停状态**。已持久化的活动任务不会自动重新发送，而是标记为 `interrupted` 等待核实；打开面板扫描时，只有 Host 确认**相同 Session ID 仍在运行**的项目才重新关联，仅恢复观察。
 - 用户可在旧 Goal 已停止且具有可恢复的持久目标时，明确点击 **「激活旧 Goal」**，在**原 Session** 执行 `/goal resume`；普通任务不作不确定的自动续发，可以人工重排到新 Session。
-- 标题字段可以留空。普通模式保留 DSH 原生会话命名路径，不人工注入额外 prompt 或重命名；当 DSH Session 列表提供真正的 `title` 时同步显示。**纯 `/goal` 命令不会触发 DSH 的首条用户消息标题生成器**，因此纯 Goal 留空时暂显示「未命名目标任务」，不会声称已有模型生成标题。
+- **模型标题开关（新增）**：添加/编辑任务时可以勾选「由模型根据任务题词生成标题」，设置最长 **8–80 个 Unicode 字符（默认 24）**。不勾选仍保持原生标题路径；勾选后在任务实际派发前发起独立、无工具的标题模型请求，生成结果通过 DSH 原生 `sessionTitle.rename()` 保存和展示。
 
 ## 重要边界
 
@@ -32,13 +32,23 @@
 
 ### 旧版队列迁移
 
-0.2.x 的持久队列数据使用 `version=1`、`activeId`。0.3.0 **仍接受旧版本**，在读取时派生 `activeIds` 与默认并发数 1，保留旧任务 ID、顺序、Session ID 和执行历史。首次保存会一起写入新的 `activeIds`、`maxConcurrent`、`source`。解析失败必须报错，不可覆盖成空队列。新版本执行并保存之后，不应直接降级到旧 0.2.x 插件。
+0.2.x 的持久队列数据使用 `version=1`、`activeId`。0.3.1 **仍接受旧版本**，在读取时派生 `activeIds` 与默认并发数 1，保留旧任务 ID、顺序、Session ID 和执行历史。首次保存会一起写入新的 `activeIds`、`maxConcurrent`、`source`；可选的 `generateTitle`/`titleMaxChars` 没有的旧任务默认为不启用辅助标题。解析失败必须报错，不可覆盖成空队列。新版本执行并保存之后，不应直接降级到旧 0.2.x 插件。
+
+### 模型标题生成：选项、成本与边界
+
+新增控件默认**不勾选**。勾选后，任务标题输入框自动清空并禁用，可以在「模型标题最长字符数」输入框中填写 8–80，默认 24。输入长度超限时既在表单层验证，也在 Host 端对模型输出按 Unicode 码点强制截断，不会因为模型忽视长度指令而生成超长标题。模型标题仅从任务题词归纳，不需要用户自定义模型系统提示词。
+
+实际运行时，Host 可选注册 `/goal-queue-title` 命令。该命令属于 DSH 人类命令平面，**不会追加普通用户任务消息，也不会调度 Goal Round**；处理器使用当前 DSH 的**默认模型路由**（`agentDefaultModel.currentSelection()`）调用 `llm.prepareCall()` 进行独立的、无工具、最多 128 输出 Token 的辅助推理，再用 `sessionTitle.rename()` 保存标题。只在用户勾选时产生一次额外模型请求，可能增加 Token 费用、占用模型算力并延后任务开始；**并不占用插件的新增 Session 名额**。
+
+若当前 Host 未加载 `commands`、`llm`、`agentDefaultModel`、`sessionTitle` 等服务，或模型调用出错，标题生成会失败，插件记录警告/异常详情，但不因此再次发送任务 Prompt。任务仍按原来的安全调度规则执行，不以模型标题是否生成判断任务完成。模型路由沿用 DSH 默认配置，可能与个别 Session 手动切换后的模型不同。
+
+生成标题的题词作为命令输入发送到本机 DSH Host 进行辅助推理；命令注册时设为 `recordInput: false`，避免在 `command/run` 再存一份完整题词。任务正文仍按原有队列持久化策略保存。
 
 ### 原生自动命名的准确行为
 
 官方 `@deepseek-ai/dsh-session-title` 从符合条件的用户消息生成回退标题；如果 Desktop 组合了 `@deepseek-ai/dsh-session-title-first-prompt-llm`，才可能由模型异步生成标题。模型标题不是所有部署都保证存在；插件只同步 DSH 实际提供的非空 `title`，不会把 `displayTitle` 的工作区名称当作模型生成结果。
 
-Goal 通过独立的 `/goal` 命令执行，续行消息来源为 `kind: 'goal'`，不满足默认首消息标题服务仅接受 `kind: 'user'` 的条件。若将来需要纯 Goal 的模型标题，应另行实现受控的辅助标题推理接口与额外请求配额，并通过实际端到端测试；当前版本不在 Goal Session 中伪造普通用户消息。
+Goal 通过独立的 `/goal` 命令执行，续行消息来源为 `kind: 'goal'`，不满足默认首消息标题服务仅接受 `kind: 'user'` 的条件。如果需要纯 Goal 的模型标题，**明确勾选新增控件**即可使用上述独立模型辅助请求；未勾选的纯 Goal 仍不触发官方首消息命名器。新版同样不会向 Goal Session 伪造普通用户消息。
 
 ## 开发与构建
 
@@ -63,7 +73,11 @@ npm run build
 - [配置 CAS 读写](src/client/settings.ts)
 - [管理面板](src/client/QueueBoard.tsx)
 - [新增功能测试](test/discovery-concurrency.test.ts)
+- [模型标题生成实现](src/title-command.ts)
+- [标题输入和字符数验证](src/title-policy.ts)
+- [模型标题专项测试](test/title-generation.test.ts)
 - [功能扩展复审及发布边界](docs/功能扩展复审_2026-10-19.md)
+- [模型标题功能复审](docs/模型标题生成_复审_2026-10-19.md)
 - [实机验收清单](docs/DPH_V0.2.1-rc.2_实机验收清单.md)
 
 此项目暂未在 npm 发布（`private: true`），也尚未通过真实 Windows DPH Desktop V0.2.1-rc.2 的安装和运行验收，不能宣称正式发布。
