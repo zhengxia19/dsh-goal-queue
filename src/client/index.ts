@@ -7,6 +7,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import { HostQueueSettings } from './settings.ts'
@@ -21,7 +22,7 @@ export function apply(ctx: Context): void {
   const connection = ctx.get('connection') as ConnectionHandle
   const settings = new HostQueueSettings(ctx)
   settings.start()
-  const coordinator = new Coordinator(ctx.sessions, ctx.workspaces, settings,
+  const coordinator = new Coordinator(ctx.sessions as unknown as ISessions, ctx.workspaces, settings,
     () => connection.generation.getSnapshot() !== undefined,
     (id) => ctx.uiWorkspace.openSession(id))
   coordinator.start()
