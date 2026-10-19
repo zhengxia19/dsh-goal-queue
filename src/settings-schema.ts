@@ -11,8 +11,8 @@ export const queueSchema: z<QueueSettings> = z.object({
     tasks: z.array(z.object({
       id: z.string(), workspaceId: z.string(), title: z.string(), prompt: z.string(),
       goalMode: z.boolean(), status: z.union([...STATES]),
-      sessionId: z.string().optional(), goalId: z.string().optional(),
-      seenRunning: z.boolean().optional(), detail: z.string().optional(),
+      sessionId: z.union([z.string(), z.const(undefined)]), goalId: z.union([z.string(), z.const(undefined)]),
+      seenRunning: z.union([z.boolean(), z.const(undefined)]), detail: z.union([z.string(), z.const(undefined)]),
       createdAt: z.number(), updatedAt: z.number(),
     })).default([]),
   }).default({ enabled: false, activeId: null, error: '', tasks: [] }),
