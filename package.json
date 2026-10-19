@@ -1,8 +1,8 @@
 {
   "name": "dsh-goal-queue",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
-  "description": "Native cross-workspace serial goal queue for DeepSeek Harness Desktop v0.2.1-rc.2",
+  "description": "Native multi-session task queue for DeepSeek Harness Desktop v0.2.1-rc.2",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
