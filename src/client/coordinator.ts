@@ -31,6 +31,8 @@ export class Coordinator {
   private booted = false
   /** Never persisted: must be granted by a click in this exact Client generation. */
   private armed = false
+  /** A newer Start/Pause click supersedes any unsettled earlier write. */
+  private controlIntent = 0
   private epoch = 0
   private readonly disposers: Array<() => void> = []
 
@@ -60,6 +62,7 @@ export class Coordinator {
   async connectionReset(): Promise<void> {
     if (this.closed) return
     this.armed = false
+    this.controlIntent++
     this.epoch++
     this.release()
     // The settings Remote has changed generations; do not write with an obsolete CAS revision.
@@ -71,6 +74,7 @@ export class Coordinator {
   dispose(): void {
     this.closed = true
     this.armed = false
+    this.controlIntent++
     this.epoch++
     this.release()
     for (const dispose of this.disposers.splice(0)) dispose()
@@ -87,6 +91,7 @@ export class Coordinator {
   /** Local quarantine is independent of the Host write result. */
   private quarantine(reason: string): void {
     this.armed = false
+    this.controlIntent++
     this.booted = false
     this.settings.failClosed(reason)
     this.release()
@@ -115,9 +120,11 @@ export class Coordinator {
   retry(id: string): Promise<void> { return this.write(q => retry(q, id)) }
   skip(id: string): Promise<void> { return this.write(q => skip(q, id)) }
   async enable(enabled: boolean): Promise<void> {
+    const intent = ++this.controlIntent
     if (!enabled) this.armed = false
     const generation = this.epoch
     await this.write(q => {
+      if (intent !== this.controlIntent) return q
       if (!this.booted || !this.connected() || generation !== this.epoch) {
         throw new Error('连接或恢复尚未就绪；不能启用队列')
       }
@@ -126,7 +133,7 @@ export class Coordinator {
       }
       return { ...q, enabled, error: enabled ? '' : q.error }
     })
-    if (enabled) {
+    if (enabled && intent === this.controlIntent) {
       if (this.closed || generation !== this.epoch || !this.connected() || !this.booted) {
         throw new Error('连接状态已变化；队列必须重新手工启用')
       }
