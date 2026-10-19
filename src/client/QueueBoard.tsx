@@ -31,6 +31,8 @@ export function QueueBoard(props:BoardProps) {
   const [workspaceId,setWorkspaceId] = useState('')
   const [prompt,setPrompt] = useState('')
   const [goalMode,setGoalMode] = useState(true)
+  const [generateTitle,setGenerateTitle] = useState(false)
+  const [titleMaxChars,setTitleMaxChars] = useState(24)
   const [submitting,setSubmitting] = useState(false)
   const [discovering,setDiscovering] = useState(false)
   useEffect(()=>{
@@ -66,13 +68,13 @@ export function QueueBoard(props:BoardProps) {
     try { await op();props.actions.error('') }
     catch(e){props.actions.error(message(e))}
   }
-  const newForm = ()=>{setEditing('new');setTitle('');setWorkspaceId(workspaces.items[0]?.workspaceId??'');setPrompt('');setGoalMode(true)}
-  const editForm = (t:Task)=>{setEditing(t.id);setTitle(t.title);setWorkspaceId(t.workspaceId);setPrompt(t.prompt);setGoalMode(t.goalMode)}
+  const newForm = ()=>{setEditing('new');setTitle('');setWorkspaceId(workspaces.items[0]?.workspaceId??'');setPrompt('');setGoalMode(true);setGenerateTitle(false);setTitleMaxChars(24)}
+  const editForm = (t:Task)=>{setEditing(t.id);setTitle(t.title);setWorkspaceId(t.workspaceId);setPrompt(t.prompt);setGoalMode(t.goalMode);setGenerateTitle(t.generateTitle??false);setTitleMaxChars(t.titleMaxChars??24)}
   const onSave = async (event:FormEvent)=>{
     event.preventDefault()
     if(submitting)return
     setSubmitting(true)
-    const input={title,workspaceId,prompt,goalMode}
+    const input={title:generateTitle?'':title,workspaceId,prompt,goalMode,generateTitle,titleMaxChars}
     try {
       if(editing==='new')await props.operations.add(input)
       else if(editing)await props.operations.edit(editing,input)
@@ -142,14 +144,16 @@ export function QueueBoard(props:BoardProps) {
     {editing!==null&&<div className="gq-modal-backdrop" onMouseDown={(e)=>{if(e.target===e.currentTarget)setEditing(null)}}>
       <form className="gq-modal" onSubmit={e=>{void onSave(e)}}>
         <h2>{editing==='new'?'添加任务':'编辑待执行任务'}</h2>
-        <label>任务标题（可留空）<input maxLength={200} value={title} onChange={e=>setTitle(e.target.value)} placeholder="可选，留空时普通模式沿用 DSH 自动标题" /></label>
+        <label>任务标题（可留空）<input maxLength={200} value={title} disabled={generateTitle} onChange={e=>setTitle(e.target.value)} placeholder={generateTitle?'将由模型生成标题':'可选，留空时普通模式沿用 DSH 自动标题'} /></label>
+        <label className="gq-check"><input type="checkbox" checked={generateTitle} onChange={e=>{setGenerateTitle(e.target.checked);if(e.target.checked)setTitle('')}}/> 由模型根据任务题词生成标题（额外模型请求）</label>
+        {generateTitle&&<label>模型标题最长字符数 <input type="number" min={8} max={80} step={1} required value={titleMaxChars} onChange={e=>setTitleMaxChars(Number(e.target.value))}/></label>}
         <label>执行工作区<select required value={workspaceId} onChange={e=>setWorkspaceId(e.target.value)}>
           <option value="">选择工作区</option>
           {workspaces.items.map(w=><option key={w.workspaceId} value={w.workspaceId}>{w.title} — {w.path}</option>)}
         </select></label>
         <label className="gq-check"><input type="checkbox" checked={goalMode} onChange={e=>setGoalMode(e.target.checked)}/> 使用 DSH 原生目标模式（/goal）</label>
         <label>任务说明<textarea required value={prompt} onChange={e=>setPrompt(e.target.value)} rows={7} placeholder="说明任务、约束和验收标准"/></label>
-        <p>标题可留空；普通任务由 DSH 原生标题服务生成。纯 /goal 不产生首条普通用户消息，暂不保证自动生成模型标题；不发送额外指令避免重复执行。每项新任务建立独立 Session。</p>
+        <p>标题可留空；不勾选时普通任务沿用 DSH 原生标题，纯 /goal 无法触发首消息自动命名。勾选后插件通过 Host 无工具的独立模型请求生成标题（8–80 字符硬上限），不向任务 Session 发送额外执行指令。</p>
         <footer><button type="button" onClick={()=>setEditing(null)}>取消</button><button className="gq-primary" disabled={submitting||!workspaceId} type="submit">保存</button></footer>
       </form>
     </div>}
