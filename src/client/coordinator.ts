@@ -23,6 +23,9 @@ export class Coordinator {
   private repump=false
   private closed=false
   private booted=false
+  /** A trusted Host Session scan is required before first dispatch in Desktop. */
+  private discovered=false
+  private scanning:Promise<number>|undefined
   private armed=false
   private controlIntent=0
   private epoch=0
@@ -54,11 +57,11 @@ export class Coordinator {
   async connectionReset():Promise<void>{
     if(this.closed)return
     this.armed=false;this.controlIntent++;this.epoch++;this.releaseAll()
-    this.booted=false;void this.pump()
+    this.booted=false;this.discovered=false;void this.pump()
   }
   dispose():void{
     this.closed=true;this.armed=false;this.controlIntent++;this.epoch++
-    this.releaseAll();for(const stop of this.disposers.splice(0))stop()
+    this.releaseAll();this.discovered=false;for(const stop of this.disposers.splice(0))stop()
   }
   private queue():QueueState {
     const snapshot=this.settings.getSnapshot()
@@ -103,6 +106,7 @@ export class Coordinator {
     await this.write(q=>{
       if(intent!==this.controlIntent)return q
       if(!this.booted||!this.connected()||generation!==this.epoch)throw Error('连接或恢复未就绪')
+      if(enabled&&this.sessions.list&&!this.discovered)throw Error('请先打开队列完成当前 DPH Session 扫描，再启动队列')
       if(enabled&&q.tasks.some(t=>UNRESOLVED.includes(t.status)))
         throw Error('存在未确认的历史任务，请先检查原 Session 并处置')
       return {...q,enabled,error:enabled?'':q.error}
@@ -121,6 +125,7 @@ export class Coordinator {
       if(this.settings.getSnapshot().status!=='ready')return
       if(!this.booted){
         this.armed=false
+        this.discovered=false
         await this.write(q=>recover(q,'程序启动或连接切换；检查旧 Session 后手工激活队列'))
         this.booted=true
         return
@@ -143,10 +148,10 @@ export class Coordinator {
       if(this.repump){this.repump=false;queueMicrotask(()=>{void this.pump()})}
     }
   }
-  private async hold(id:string,sessionId:SessionId):Promise<Active>{
+  private async hold(id:string,sessionId:SessionId,expectedEpoch=this.epoch):Promise<Active>{
     const reference=this.sessions.retain(sessionId,{source:'goalQueue'})
     try{await reference.ready}catch(e){reference.release();throw e}
-    if(this.closed){reference.release();throw Error('插件已关闭')}
+    if(this.closed||expectedEpoch!==this.epoch){reference.release();throw Error('Client 连接已切换，放弃旧 Session 引用')}
     const session=reference.binding.session
     const held:Active={taskId:id,epoch:this.epoch,session,reference,subscriptions:[]}
     this.live.set(id,held)
@@ -164,7 +169,7 @@ export class Coordinator {
       created=true
       if(generation!==this.epoch||this.closed)return
       await this.write(q=>setSessionId(q,task.id,sessionId))
-      const held=await this.hold(task.id,sessionId)
+      const held=await this.hold(task.id,sessionId,generation)
       if(generation!==this.epoch||this.closed){this.release(task.id);return}
       if(task.goalMode){
         submitted=true
@@ -225,16 +230,27 @@ export class Coordinator {
       if(this.observeAgain.delete(id))queueMicrotask(()=>{void this.observe(id)})
     }
   }
+  /** Concurrent refresh clicks share one discovery pass. */
+  discover():Promise<number>{
+    if(this.scanning)return this.scanning
+    const pending=this.scanRunning()
+    this.scanning=pending
+    void pending.then(()=>{if(this.scanning===pending)this.scanning=undefined},()=>{if(this.scanning===pending)this.scanning=undefined})
+    return pending
+  }
   /** Discover at UI open. A discovery only observes; it never submits a model command. */
-  async discover():Promise<number>{
+  private async scanRunning():Promise<number>{
     if(!this.connected()||!this.booted||this.settings.getSnapshot().status!=='ready')
       throw Error('Host 尚未就绪')
+    const generation=this.epoch
+    this.discovered=false
     await this.sessions.refresh()
+    if(generation!==this.epoch||!this.connected())throw Error('扫描期间连接已切换，重新打开队列再试')
     const snapshot=this.sessions.list.getSnapshot()
     if(snapshot.phase!=='ready')throw Error('DSH Session 列表尚未读取完成，拒绝以空列表代替')
     let found=0
     for(const id of snapshot.ids){
-      if(this.closed||!this.connected())break
+      if(this.closed||!this.connected()||generation!==this.epoch)throw Error('扫描过程中连接已断开，请重新检查 Session')
       const row=snapshot.byId[id]
       if(!row||!row.running||row.origin==='subagent')continue
       const old=this.queue().tasks.find(t=>t.sessionId===id)
@@ -251,6 +267,7 @@ export class Coordinator {
         const raw=reference.binding.session.projections.faceOf('goal').getSnapshot()
         if(raw&&typeof raw==='object')projection=raw as typeof projection
       }finally{reference.release()}
+      if(generation!==this.epoch||this.closed)throw Error('连接已切换，不能沿用旧扫描结果')
       const goal=projection?.goal
       const taskId=old?.id??crypto.randomUUID()
       await this.write(q=>adopt(q,{
@@ -258,7 +275,7 @@ export class Coordinator {
         goalMode:old?.goalMode??Boolean(goal),goalId:goal?.id,prompt:old?.prompt??goal?.objective??''
       },taskId))
       if(!this.live.has(taskId)){
-        try{await this.hold(taskId,id)}catch(e){
+        try{await this.hold(taskId,id,generation)}catch(e){
           await this.fail(taskId,'interrupted','无法重新连接旧 Session：'+err(e));continue
         }
         void this.observe(taskId)
@@ -266,6 +283,8 @@ export class Coordinator {
       found++
     }
     await this.syncTitles()
+    if(generation!==this.epoch||this.closed)throw Error('连接已切换，扫描结果无效')
+    this.discovered=true
     return found
   }
   private async syncTitles():Promise<void>{
