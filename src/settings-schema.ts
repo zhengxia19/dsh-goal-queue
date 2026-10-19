@@ -11,7 +11,8 @@ export const queueSchema = z.object({
     error: z.string().default(''),
     tasks: z.array(z.object({
       id: z.string(), workspaceId: z.string(), title: z.string(), prompt: z.string(),
-      goalMode: z.boolean(), source: z.union([z.const('queue'),z.const('discovered'),z.const(undefined)]), status: z.union([...STATES]),
+      goalMode: z.boolean(), generateTitle: z.union([z.boolean(), z.const(undefined)]),
+      titleMaxChars: z.union([z.number().step(1).min(8).max(80),z.const(undefined)]), source: z.union([z.const('queue'),z.const('discovered'),z.const(undefined)]), status: z.union([...STATES]),
       sessionId: z.union([z.string(), z.const(undefined)]), goalId: z.union([z.string(), z.const(undefined)]),
       seenRunning: z.union([z.boolean(), z.const(undefined)]), detail: z.union([z.string(), z.const(undefined)]),
       createdAt: z.number(), updatedAt: z.number(),
