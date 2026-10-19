@@ -27,11 +27,18 @@ export class Coordinator {
   private controlIntent=0
   private epoch=0
   private readonly disposers:(()=>void)[]=[]
+  private readonly sessions:ISessions
+  private readonly workspaces:IWorkspaces
+  private readonly settings:QueueSettingsSource
+  private readonly connected:()=>boolean
+  private readonly openSession?: (id:SessionId)=>void
   constructor(
-    private readonly sessions:ISessions,private readonly workspaces:IWorkspaces,
-    private readonly settings:QueueSettingsSource,private readonly connected:()=>boolean,
-    private readonly openSession?:(id:SessionId)=>void
-  ){}
+    sessions:ISessions,workspaces:IWorkspaces,settings:QueueSettingsSource,
+    connected:()=>boolean,openSession?:(id:SessionId)=>void
+  ){
+    this.sessions=sessions;this.workspaces=workspaces;this.settings=settings
+    this.connected=connected;this.openSession=openSession
+  }
   start():void {
     this.disposers.push(this.settings.subscribe(()=>{
       void this.pump()
