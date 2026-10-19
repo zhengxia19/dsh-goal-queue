@@ -1,8 +1,7 @@
 /** Host-validated durable settings section. Only data, never a duplicate goal database. */
 import z from '@deepseek-ai/schemastery'
-import type { QueueSettings } from './queue.ts'
 import { STATES } from './queue.ts'
-export const queueSchema: z<QueueSettings> = z.object({
+export const queueSchema = z.object({
   version: z.const(1).default(1).volatile(),
   queue: z.object({
     enabled: z.boolean().default(false),
