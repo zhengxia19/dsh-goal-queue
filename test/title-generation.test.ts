@@ -26,7 +26,7 @@ test('model title input rejects invalid bounds and overlong prompts',()=>{
 })
 
 test('title model output respects Unicode character cap and discards explanations',()=>{
-  assert.equal(boundedTitle('**支持中文标题生成和长度约束**\n额外说明',8),'支持中文标题生成和')
+  assert.equal(boundedTitle('**支持中文标题生成和长度约束**\n额外说明',8),'支持中文标题生成')
   assert.equal(boundedTitle('“测试部署和发布”',12),'测试部署和发布')
   assert.equal(Array.from(boundedTitle('😀'.repeat(30),8)).length,8)
   assert.throws(()=>boundedTitle('   ',12),/有效标题/)
