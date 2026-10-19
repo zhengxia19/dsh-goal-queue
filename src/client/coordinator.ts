@@ -271,13 +271,13 @@ export class Coordinator {
   private async syncTitles():Promise<void>{
     if(this.closed||!this.sessions.list||this.settings.getSnapshot().status!=='ready')return
     const rows=this.sessions.list.getSnapshot().byId
-    const updates=this.queue().tasks.filter(t=>!t.title&&t.sessionId&&rows[t.sessionId]?.title)
+    const updates=this.queue().tasks.filter(t=>!t.title&&t.sessionId&&rows[t.sessionId as SessionId]?.title)
     if(!updates.length)return
     try{
       await this.write(q=>{
         let out=q
         for(const task of updates){
-          const title=task.sessionId?rows[task.sessionId]?.title:undefined
+          const title=task.sessionId?rows[task.sessionId as SessionId]?.title:undefined
           if(title&&out.tasks.find(t=>t.id===task.id&&!t.title))out=updateTitle(out,task.id,title)
         }
         return out
