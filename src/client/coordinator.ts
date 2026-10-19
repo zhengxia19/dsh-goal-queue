@@ -130,7 +130,7 @@ export class Coordinator {
         this.booted=true
         return
       }
-      if(!this.armed||!this.connected())return
+      if(!this.armed||!this.connected()||(this.sessions.list&&!this.discovered))return
       // Sequentially reserve each available slot before submitting external work.
       while(this.armed&&!this.closed&&this.connected()){
         const task=next(this.queue())
@@ -285,6 +285,7 @@ export class Coordinator {
     await this.syncTitles()
     if(generation!==this.epoch||this.closed)throw Error('连接已切换，扫描结果无效')
     this.discovered=true
+    void this.pump()
     return found
   }
   private async syncTitles():Promise<void>{
