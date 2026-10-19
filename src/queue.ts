@@ -152,6 +152,9 @@ export function updateTitle(q:QueueState,id:string,title:string):QueueState{
 }
 export function retry(q:QueueState,id:string):QueueState{
   if(q.activeIds.includes(id))throw Error('不能重新派发仍在运行的任务')
+  const task=q.tasks.find(t=>t.id===id)
+  if(task&&UNRESOLVED.includes(task.status)&&!task.prompt.trim())
+    throw Error('导入的 Session 没有可复用的任务说明，不能重新派发；请人工跳过后新建任务')
   return {...q,tasks:q.tasks.map(t=>t.id===id&&UNRESOLVED.includes(t.status)?{
     ...t,status:'pending',source:'queue',sessionId:undefined,goalId:undefined,seenRunning:false,
     detail:'重新排队会创建新 Session，请先确认旧 Session 已停止',updatedAt:Date.now()
