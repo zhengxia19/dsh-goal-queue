@@ -90,7 +90,7 @@ export function QueueBoard(props:BoardProps) {
         <label>最大并发 <select aria-label="最大并发任务数" value={q.maxConcurrent} onChange={e=>{void change(()=>props.operations.setConcurrency(Number(e.target.value)))}}>
           {Array.from({length:8},(_,i)=>i+1).map(n=><option key={n} value={n}>{n}</option>)}
         </select></label>
-        <button type="button" className={q.enabled?'gq-warn':'gq-primary'} disabled={!q.enabled && blockers.length>0} onClick={()=>{void change(()=>props.operations.enable(!q.enabled))}}>
+        <button type="button" className={q.enabled?'gq-warn':'gq-primary'} disabled={!q.enabled && (blockers.length>0 || discovering)} onClick={()=>{void change(()=>props.operations.enable(!q.enabled))}}>
           {q.enabled?'暂停队列':'启动队列'}
         </button>
         <button type="button" onClick={()=>props.actions.close()}>关闭</button>
@@ -113,7 +113,7 @@ export function QueueBoard(props:BoardProps) {
             <span className="gq-order">{i+1}</span>
             <div className="gq-desc">
               <strong>{task.title || (task.goalMode ? '未命名目标任务' : '等待 DSH 自动生成标题')}</strong>
-              <small>{workspaces.items.find(w=>w.workspaceId===task.workspaceId)?.title??task.workspaceId}</small>
+              <small>{workspaces.items.find(w=>w.workspaceId===task.workspaceId)?.title??(task.workspaceId||'未关联工作区')}</small>
             </div>
             <span className="gq-pill">{task.source==='discovered'?'DPH 原有任务':task.goalMode?'目标模式 /goal':'普通模式'}</span>
             <span className="gq-pill" data-status={task.status}>{labels[task.status]}</span>
@@ -127,7 +127,7 @@ export function QueueBoard(props:BoardProps) {
             <button type="button" disabled={q.activeIds.includes(task.id)||UNRESOLVED.includes(task.status)} onClick={()=>{void change(()=>props.operations.remove(task.id))}}>删除</button>
             {task.sessionId&&<button type="button" onClick={()=>{props.operations.open(task.id);props.actions.close()}}>打开 Session</button>}
             {task.status==='interrupted'&&task.goalMode&&task.sessionId&&<button type="button" onClick={()=>{if(!window.confirm('将在原 Session 内执行 /goal resume；请确认先前的执行已经停止。'))return;void change(()=>props.operations.resumeGoal(task.id))}}>激活旧 Goal</button>}
-            {UNRESOLVED.includes(task.status)&&<button type="button" onClick={()=>{
+            {UNRESOLVED.includes(task.status)&&Boolean(task.prompt.trim())&&<button type="button" onClick={()=>{
               if(!window.confirm('重新排队将创建新的 Session。请先确认旧 Session 已停止，防止重复修改代码。'))return
               void change(()=>props.operations.retry(task.id))
             }}>重新排队</button>}
