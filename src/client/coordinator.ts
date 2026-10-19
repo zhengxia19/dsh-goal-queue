@@ -5,7 +5,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { QueueSettingsSource } from './settings.ts'
 import { observeTask } from './observe-task.ts'
 import { UNRESOLVED,add,adopt,claim,decode,edit,move,next,recover,remove,retry,
-  setConcurrency,setSessionId,skip,updateActive,updateTitle,type QueueState,type Task } from '../queue.ts'
+  setConcurrency,setSessionId,skip,updateActive,updateTitle,type QueueState,type Task,type TaskInput } from '../queue.ts'
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
   interface SessionReferenceSourceMap { goalQueue: unknown }
 }
@@ -84,10 +84,10 @@ export class Coordinator {
     this.settings.failClosed(reason)
     this.releaseAll()
   }
-  add(input:Pick<Task,'title'|'workspaceId'|'prompt'|'goalMode'>):Promise<void>{
+  add(input:TaskInput):Promise<void>{
     return this.write(q=>add(q,input,crypto.randomUUID()))
   }
-  edit(id:string,input:Pick<Task,'title'|'workspaceId'|'prompt'|'goalMode'>):Promise<void>{
+  edit(id:string,input:TaskInput):Promise<void>{
     return this.write(q=>edit(q,id,input))
   }
   remove(id:string):Promise<void>{return this.write(q=>remove(q,id))}
@@ -171,6 +171,22 @@ export class Coordinator {
       await this.write(q=>setSessionId(q,task.id,sessionId))
       const held=await this.hold(task.id,sessionId,generation)
       if(generation!==this.epoch||this.closed){this.release(task.id);return}
+      // Optional tool-free auxiliary LLM title request. It never submits a user prompt
+      // to the task Session; a title failure must not silently replay or cancel the task.
+      if(task.generateTitle){
+        try {
+          const result=await held.session.command('/goal-queue-title '+JSON.stringify({
+            maxChars:task.titleMaxChars??24,prompt:task.prompt
+          }))
+          if(!result.ok)throw Error(result.error.message)
+          if(!result.value.matched)throw Error('Host 未安装模型标题生成命令')
+        } catch(e) {
+          console.warn('[goal-queue] optional AI title generation failed; task proceeds normally:',err(e))
+          await this.write(q=>q.activeIds.includes(task.id)
+            ?updateActive(q,task.id,{detail:'模型标题生成失败：'+err(e)+'；任务继续正常派发'}):q)
+        }
+      }
+      if(generation!==this.epoch||this.closed||!this.connected()){this.release(task.id);return}
       if(task.goalMode){
         submitted=true
         const response=await held.session.command('/goal '+task.prompt.replace(/\s+/g,' ').trim())
@@ -291,14 +307,14 @@ export class Coordinator {
   private async syncTitles():Promise<void>{
     if(this.closed||!this.sessions.list||this.settings.getSnapshot().status!=='ready')return
     const rows=this.sessions.list.getSnapshot().byId
-    const updates=this.queue().tasks.filter(t=>!t.title&&t.sessionId&&rows[t.sessionId as SessionId]?.title)
+    const updates=this.queue().tasks.filter(t=>t.sessionId&&rows[t.sessionId as SessionId]?.title && (!t.title || (t.generateTitle && rows[t.sessionId as SessionId]?.title!==t.title)))
     if(!updates.length)return
     try{
       await this.write(q=>{
         let out=q
         for(const task of updates){
           const title=task.sessionId?rows[task.sessionId as SessionId]?.title:undefined
-          if(title&&out.tasks.find(t=>t.id===task.id&&!t.title))out=updateTitle(out,task.id,title)
+          if(title&&out.tasks.find(t=>t.id===task.id&&(!t.title||(t.generateTitle&&t.title!==title))))out=updateTitle(out,task.id,title)
         }
         return out
       })
