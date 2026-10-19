@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Coordinator } from '../src/client/coordinator.ts'
-import { EMPTY_QUEUE,add,adopt,decode,claim,recover,next,setConcurrency,type QueueSettings,type QueueState } from '../src/queue.ts'
+import { EMPTY_QUEUE,add,adopt,decode,claim,recover,next,setConcurrency,retry,type QueueSettings,type QueueState } from '../src/queue.ts'
 
 const tick=async()=>{for(let i=0;i<16;i++)await new Promise(resolve=>setTimeout(resolve,0))}
 const input=(name:string)=>({workspaceId:'ws',prompt:'Implement '+name,title:name,goalMode:false})
@@ -126,4 +126,25 @@ test('manual Goal reactivation uses original Session and never creates another S
 test('empty title remains valid and no synthetic model title command is submitted',()=>{
   const q=add(EMPTY_QUEUE,{workspaceId:'ws',prompt:'请实现功能',title:'',goalMode:true},'goal')
   assert.equal(q.tasks[0]?.title,'')
+})
+
+test('start is blocked until a trustworthy DPH Session scan has completed',async()=>{
+  const x=setup(add(EMPTY_QUEUE,input('later'),'a'))
+  x.coordinator.start();await tick()
+  await assert.rejects(x.coordinator.enable(true),/扫描/)
+  assert.equal(x.created(),0)
+  const first=x.coordinator.discover(),second=x.coordinator.discover()
+  assert.equal(first,second,'simultaneous discovery calls share one in-flight promise')
+  await first;await tick()
+  await x.coordinator.enable(true);await tick()
+  // Existing running Session consumes the sole default slot.
+  assert.equal(x.created(),0)
+  x.ordinary.state.running=false;x.ordinary.emit();await tick()
+  assert.equal(x.created(),1)
+  x.coordinator.dispose()
+})
+test('an imported unknown prompt must not be replayed as an empty task',()=>{
+  let q=adopt(EMPTY_QUEUE,{sessionId:'old',workspaceId:'ws',title:'existing',goalMode:false},'imported')
+  q=recover({...q,enabled:true})
+  assert.throws(()=>retry(q,'imported'),/没有可复用的任务说明/)
 })
