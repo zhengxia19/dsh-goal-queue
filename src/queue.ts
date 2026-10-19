@@ -159,6 +159,7 @@ export function retry(q:QueueState,id:string):QueueState{
 }
 export function skip(q:QueueState,id:string):QueueState{
   if(q.activeIds.includes(id))throw Error('运行任务不能跳过')
+  if(!q.tasks.some(t=>t.id===id&&UNRESOLVED.includes(t.status)))throw Error('只能手工跳过未处置的异常任务')
   return {...q,tasks:q.tasks.map(t=>t.id===id&&UNRESOLVED.includes(t.status)?{
     ...t,status:'skipped',detail:'用户确认跳过；不代表执行完成',updatedAt:Date.now()
   }:t)}
