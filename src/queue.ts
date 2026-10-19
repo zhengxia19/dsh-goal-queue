@@ -75,7 +75,7 @@ export function edit(q:QueueState,id:string,input:Pick<Task,'title'|'workspaceId
 }
 export function remove(q:QueueState,id:string):QueueState{
   if(q.activeIds.includes(id))throw Error('运行中的任务不能删除')
-  if(q.tasks.some(t=>t.id===id&&UNRESOLVED.includes(t.status)))throw Error('请先处置异常任务，不能删除证据')
+  if(q.tasks.some(t=>t.id===id&&UNRESOLVED.includes(t.status)))throw Error('异常任务必须先检查原 Session 并进行人工处置，不能删除证据')
   return {...q,tasks:q.tasks.filter(t=>t.id!==id)}
 }
 export function move(q:QueueState,id:string,offset:-1|1):QueueState{
@@ -101,8 +101,9 @@ export function claim(q:QueueState,id:string,now=Date.now()):QueueState{
 }
 export function updateActive(q:QueueState,id:string,patch:Partial<Task>,now=Date.now()):QueueState{
   if(!q.activeIds.includes(id))throw Error('当前任务执行权已经失效')
-  const forbidden=['id','workspaceId','prompt','goalMode','createdAt','source','sessionId']
+  const forbidden=['id','workspaceId','title','prompt','goalMode','createdAt','source']
   if(forbidden.some(k=>Object.prototype.hasOwnProperty.call(patch,k)))throw Error('不允许修改执行中任务身份')
+  if(patch.sessionId&&q.tasks.some(t=>t.id!==id&&t.sessionId===patch.sessionId))throw Error('Session 已归属其他任务')
   const {status,...rest}=patch
   if(status!==undefined&&!['running','completed','blocked','failed','interrupted'].includes(status))throw Error('非法任务状态')
   const terminal=status!==undefined&&['completed','blocked','failed','interrupted'].includes(status)
@@ -121,7 +122,7 @@ export function setSessionId(q:QueueState,id:string,sessionId:string):QueueState
 export function recover(q:QueueState,reason='应用重新启动，旧会话等待核实'):QueueState{
   if(!q.enabled&&!q.activeIds.length)return q
   const affected=new Set(q.activeIds)
-  return withActive({...q,enabled:false,error:affected.size?reason:q.error,
+  return withActive({...q,enabled:false,error:reason,
     tasks:q.tasks.map(t=>affected.has(t.id)?{...t,status:'interrupted',detail:reason,updatedAt:Date.now()}:t)
   },[])
 }
