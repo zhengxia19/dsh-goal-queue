@@ -7,8 +7,10 @@ import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controlle
 import { DEFAULT_SETTINGS, UNRESOLVED, type Task } from '../queue.ts'
 import type { viewStore } from './store.ts'
 import type { Coordinator } from './coordinator.ts'
+import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types'
+import { resolveTaskModel, type TaskModelSelection } from '../model-policy.ts'
 
-type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open' | 'discover' | 'resumeGoal' | 'setConcurrency'> & {refresh: () => Promise<void>}
+type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open' | 'discover' | 'resumeGoal' | 'setConcurrency'> & {refresh: () => Promise<void>; modelCatalog: () => Promise<ModelCatalog>}
 export type BoardProps = PropsStore<typeof viewStore> & PropsRuntime<'shell.overlay'> &
   PropsHooks<{queueSettings: QueueSettingsSource, workspaces: {
     getSnapshot():WorkspaceSnapshot;subscribe(listener:()=>void):()=>void
@@ -35,6 +37,18 @@ export function QueueBoard(props:BoardProps) {
   const [titleMaxChars,setTitleMaxChars] = useState(24)
   const [submitting,setSubmitting] = useState(false)
   const [discovering,setDiscovering] = useState(false)
+  const [catalog,setCatalog] = useState<ModelCatalog>()
+  const [catalogError,setCatalogError] = useState('')
+  const [selection,setSelection] = useState<TaskModelSelection>()
+  const [followDefault,setFollowDefault] = useState(false)
+  const [catalogRevision,setCatalogRevision] = useState(0)
+  useEffect(()=>{
+    let alive=true
+    setCatalog(undefined);setCatalogError('')
+    if(!open||loadingState.status!=='ready')return
+    void props.operations.modelCatalog().then(value=>{if(alive)setCatalog(value)},e=>{if(alive)setCatalogError(message(e))})
+    return()=>{alive=false}
+  },[open,catalogRevision,loadingState.status,props.operations.modelCatalog])
   useEffect(()=>{
     if (!open) return
     const onKey = (e:KeyboardEvent)=>{if(e.key==='Escape')props.actions.close()}
@@ -68,14 +82,21 @@ export function QueueBoard(props:BoardProps) {
     try { await op();props.actions.error('') }
     catch(e){props.actions.error(message(e))}
   }
-  const newForm = ()=>{setEditing('new');setTitle('');setWorkspaceId(workspaces.items[0]?.workspaceId??'');setPrompt('');setGoalMode(true);setGenerateTitle(false);setTitleMaxChars(24)}
-  const editForm = (t:Task)=>{setEditing(t.id);setTitle(t.title);setWorkspaceId(t.workspaceId);setPrompt(t.prompt);setGoalMode(t.goalMode);setGenerateTitle(t.generateTitle??false);setTitleMaxChars(t.titleMaxChars??24)}
+  const newForm = ()=>{setEditing('new');setTitle('');setWorkspaceId(workspaces.items[0]?.workspaceId??'');setPrompt('');setGoalMode(true);setGenerateTitle(false);setTitleMaxChars(24);setFollowDefault(false);setSelection(catalog?.default)}
+  const editForm = (t:Task)=>{setEditing(t.id);setTitle(t.title);setWorkspaceId(t.workspaceId);setPrompt(t.prompt);setGoalMode(t.goalMode);setGenerateTitle(t.generateTitle??false);setTitleMaxChars(t.titleMaxChars??24);setFollowDefault(!t.modelSelection);setSelection(t.modelSelection??catalog?.default)}
+  const displayedSelection=followDefault?catalog?.default:selection
+  const selectedModel=catalog?.groups.find(p=>p.id===displayedSelection?.provider)?.models.find(m=>m.id===displayedSelection?.model)
+  let modelError=''
+  if(catalog)try{if(!followDefault&&!selection)throw Error('请选择执行模型');resolveTaskModel(catalog,followDefault?catalog.default:selection)}catch(e){modelError=message(e)}
   const onSave = async (event:FormEvent)=>{
     event.preventDefault()
     if(submitting)return
     setSubmitting(true)
-    const input={title:generateTitle?'':title,workspaceId,prompt,goalMode,generateTitle,titleMaxChars}
     try {
+      if(!catalog)throw Error(catalogError||'正在读取 Host 模型目录')
+      if(modelError)throw Error(modelError)
+      const modelSelection=followDefault?undefined:resolveTaskModel(catalog,selection)
+      const input={title:generateTitle?'':title,workspaceId,prompt,goalMode,generateTitle,titleMaxChars,modelSelection}
       if(editing==='new')await props.operations.add(input)
       else if(editing)await props.operations.edit(editing,input)
       setEditing(null);props.actions.error('')
@@ -121,6 +142,7 @@ export function QueueBoard(props:BoardProps) {
             <span className="gq-pill" data-status={task.status}>{labels[task.status]}</span>
           </div>
           <p className="gq-prompt">{task.prompt||'已纳入 DPH 现有 Session；无需重新提交指令'}</p>
+          <p className="gq-detail">{task.modelSelection?`模型：${task.modelSelection.provider} / ${task.modelSelection.model} · 推理：${task.modelSelection.reasoningEffort??'不适用'}`:task.source==='discovered'?'模型：沿用原 Session 配置':'模型：派发时使用 Host 默认并固定配置'}</p>
           {task.detail&&<p className="gq-detail">{task.detail}</p>}
           <div className="gq-task-controls">
             <button type="button" disabled={!editable||!q.tasks.slice(0,i).some(t=>t.status==='pending')} onClick={()=>{void change(()=>props.operations.move(task.id,-1))}}>上移</button>
@@ -151,10 +173,30 @@ export function QueueBoard(props:BoardProps) {
           <option value="">选择工作区</option>
           {workspaces.items.map(w=><option key={w.workspaceId} value={w.workspaceId}>{w.title} — {w.path}</option>)}
         </select></label>
+        {!catalog&&<p role="status">{catalogError||'正在读取 Host 模型目录…'}</p>}
+        <button type="button" onClick={()=>setCatalogRevision(n=>n+1)}>刷新模型目录</button>
+        {catalog?.failures.map(f=><p key={f.id} role="alert">模型目录读取失败：{f.name}。请检查 Host 配置。</p>)}
+        <label className="gq-check"><input type="checkbox" checked={followDefault} onChange={e=>setFollowDefault(e.target.checked)}/> 派发时使用 Host 默认模型和推理强度</label>
+        <label>执行模型<select required={!followDefault} disabled={followDefault||!catalog} value={displayedSelection?JSON.stringify([displayedSelection.provider,displayedSelection.model]):''} onChange={e=>{
+          const [provider,model]=JSON.parse(e.target.value) as [string,string]
+          const info=catalog?.groups.find(p=>p.id===provider)?.models.find(m=>m.id===model)
+          setSelection({provider,model,...info?.reasoning?.defaultEffort?{reasoningEffort:info.reasoning.defaultEffort}:{}})
+        }}>
+          <option value="" disabled>选择执行模型</option>
+          {displayedSelection&&!selectedModel&&<option value={JSON.stringify([displayedSelection.provider,displayedSelection.model])}>{displayedSelection.provider} / {displayedSelection.model}（当前不可用）</option>}
+          {catalog?.groups.map(p=><optgroup key={p.id} label={p.name}>{p.models.map(m=><option key={m.id} value={JSON.stringify([p.id,m.id])}>{m.name}</option>)}</optgroup>)}
+        </select></label>
+        <label>推理强度<select required={Boolean(!followDefault&&selectedModel?.reasoning)} disabled={followDefault||!selectedModel?.reasoning} value={displayedSelection?.reasoningEffort??selectedModel?.reasoning?.defaultEffort??''} onChange={e=>setSelection(s=>s?{...s,reasoningEffort:e.target.value}:s)}>
+          <option value="" disabled>{selectedModel?.reasoning?'选择推理强度':'不适用'}</option>
+          {displayedSelection?.reasoningEffort&&!selectedModel?.reasoning?.efforts.some(e=>e.id===displayedSelection.reasoningEffort)&&<option value={displayedSelection.reasoningEffort}>{displayedSelection.reasoningEffort}（当前不支持）</option>}
+          {selectedModel?.reasoning?.efforts.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+        </select></label>
+        {modelError&&<p role="alert">{modelError}</p>}
+        <p>标题生成使用与任务相同的模型和推理强度。未选择“派发时使用 Host 默认”时，保存即固定配置。Harness 原生模型选择也会更新 Host 默认模型；恢复已有 Session 不重新设置模型。</p>
         <label className="gq-check"><input type="checkbox" checked={goalMode} onChange={e=>setGoalMode(e.target.checked)}/> 使用 DSH 原生目标模式（/goal）</label>
         <label>任务说明<textarea required value={prompt} onChange={e=>setPrompt(e.target.value)} rows={7} placeholder="说明任务、约束和验收标准"/></label>
         <p>标题可留空；不勾选时普通任务沿用 DSH 原生标题，纯 /goal 无法触发首消息自动命名。勾选后插件通过 Host 无工具的独立模型请求生成标题（8–80 字符硬上限），不向任务 Session 发送额外执行指令。</p>
-        <footer><button type="button" onClick={()=>setEditing(null)}>取消</button><button className="gq-primary" disabled={submitting||!workspaceId} type="submit">保存</button></footer>
+        <footer><button type="button" onClick={()=>setEditing(null)}>取消</button><button className="gq-primary" disabled={submitting||!workspaceId||!catalog||Boolean(modelError)} type="submit">保存</button></footer>
       </form>
     </div>}
   </div>,document.body)

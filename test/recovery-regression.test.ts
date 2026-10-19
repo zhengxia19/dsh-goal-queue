@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Coordinator } from '../src/client/coordinator.ts'
+import { TEST_MODEL, testModels } from './model-fixture.ts'
 import { add, EMPTY_QUEUE, type QueueSettings, type QueueState } from '../src/queue.ts'
 
 const settle = async () => { for (let i = 0; i < 16; i++) await new Promise(resolve => setTimeout(resolve, 0)) }
@@ -38,14 +39,14 @@ function fixture(settings: SettingsDouble, options: { failCreate?: boolean; fail
     retain(id: string) { const face = {
       getSnapshot: () => ({ running: false, awaitingFirstTurn: false, lastAgentError: null }),
       subscribe: () => () => {},
-      projections: { faceOf: () => ({ getSnapshot: () => undefined, subscribe: () => () => {} }) },
+      projections: { faceOf: (key:string) => ({ getSnapshot: () => key==='modelSelection'?{next:TEST_MODEL}:undefined, subscribe: () => () => {} }) },
       command: async () => { submits++; if (options.failSubmit) throw Error('unknown remote admission'); return { ok: true, value: { matched: true } } },
       prompt: async () => { submits++; if (options.failSubmit) throw Error('unknown remote admission'); return { ok: true, value: { accepted: true } } },
     }; return { binding: { session: face }, ready: Promise.resolve({ session: face }), release() {} } },
   }
   const ws = { list: { getSnapshot: () => ({ items: [{ workspaceId: 'ws' }] }) } }
   let connected = true
-  const coordinator = new Coordinator(sessions as never, ws as never, settings as never, () => connected)
+  const coordinator = new Coordinator(sessions as never, ws as never, settings as never, () => connected,undefined,testModels)
   return { coordinator, creates: () => creates, submits: () => submits, disconnect: () => { connected = false }, reconnect: () => { connected = true } }
 }
 
@@ -114,7 +115,7 @@ test('T01 pausing live queue never starts second task', async () => {
 
 test('T04 a Session was created but recording sessionId fails: subsequent task is blocked', async () => {
   const settings = new SettingsDouble(add(add(EMPTY_QUEUE, input('A'), 'a'), input('B'), 'b'))
-  settings.failAt = 3 // enable, claim, sessionId write
+  settings.failAt = 4 // enable, claim, resolved model, sessionId write
   const x = fixture(settings)
   x.coordinator.start(); await settle(); await x.coordinator.enable(true); await settle()
   assert.equal(x.creates(), 1)
@@ -138,7 +139,7 @@ test('T04 ambiguous command admission must halt with interrupted task', async ()
 
 test('T04 Host committed a write but response was lost: never double execute', async () => {
   const settings = new SettingsDouble(add(add(EMPTY_QUEUE, input('A'), 'a'), input('B'), 'b'))
-  settings.failAt = 3
+  settings.failAt = 4
   settings.commitBeforeFailure = true
   const x = fixture(settings)
   x.coordinator.start(); await settle(); await x.coordinator.enable(true); await settle()
@@ -150,7 +151,7 @@ test('T04 Host committed a write but response was lost: never double execute', a
 
 test('T04 persistent failure to save a failure quarantines the queue', async () => {
   const settings = new SettingsDouble(add(add(EMPTY_QUEUE, input('A'), 'a'), input('B'), 'b'))
-  settings.failForeverAfter = 3
+  settings.failForeverAfter = 4
   const x = fixture(settings)
   x.coordinator.start(); await settle(); await x.coordinator.enable(true); await settle()
   assert.equal(x.creates(), 1)

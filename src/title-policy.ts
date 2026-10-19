@@ -1,10 +1,11 @@
 /** Pure title input/output policy. Auxiliary model calls never enter the task's Agent inbox. */
+import { isModelSelection, type TaskModelSelection } from './model-policy.ts'
 export const DEFAULT_TITLE_CHARS = 24
 export const MIN_TITLE_CHARS = 8
 export const MAX_TITLE_CHARS = 80
 export const MAX_TITLE_INPUT_CHARS = 8000
 
-export interface TitlePayload { maxChars: number; prompt: string }
+export interface TitlePayload { maxChars: number; prompt: string; modelSelection: TaskModelSelection }
 
 export function parseTitlePayload(raw: string): TitlePayload {
   let item: unknown
@@ -16,7 +17,8 @@ export function parseTitlePayload(raw: string): TitlePayload {
     throw Error('标题长度必须是 8–80 的整数')
   if (typeof data.prompt !== 'string' || !data.prompt.trim() || data.prompt.length > MAX_TITLE_INPUT_CHARS)
     throw Error('标题题词为空或超过 8000 字符')
-  return { maxChars: data.maxChars, prompt: data.prompt }
+  if (!isModelSelection(data.modelSelection)) throw Error('标题请求缺少有效的任务模型配置')
+  return { maxChars: data.maxChars, prompt: data.prompt, modelSelection: data.modelSelection }
 }
 
 /** Enforce a code-point cap even when the model ignores the requested length. */

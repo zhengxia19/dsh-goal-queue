@@ -16,15 +16,17 @@ import { viewStore } from './store.ts'
 import { QueueBoard } from './QueueBoard.tsx'
 import { QueueButton } from './QueueButton.tsx'
 import { styles } from './styles.ts'
+import { HostTaskModels } from './models.ts'
 
 export const inject = ['slots','sessions','workspaces','uiWorkspace','connection','remote','remote.settings']
 export function apply(ctx: Context): void {
   const connection = ctx.get('connection') as ConnectionHandle
   const settings = new HostQueueSettings(ctx)
   settings.start()
+  const models = new HostTaskModels(ctx)
   const coordinator = new Coordinator(ctx.sessions as unknown as ISessions, ctx.workspaces, settings,
     () => connection.generation.getSnapshot() !== undefined,
-    (id) => ctx.uiWorkspace.openSession(id))
+    (id) => ctx.uiWorkspace.openSession(id), models)
   coordinator.start()
   ctx.effect(() => { const css = document.createElement('style'); css.dataset.plugin = 'goal-queue'
     css.textContent = styles; document.head.appendChild(css); return () => { css.remove() } }, 'goal-queue:style')
@@ -39,6 +41,7 @@ export function apply(ctx: Context): void {
     inject: () => ({
       hooks: { queueSettings: settings, workspaces: ctx.workspaces.list },
       operations: {
+        modelCatalog: () => models.catalog(),
         add: coordinator.add.bind(coordinator), edit: coordinator.edit.bind(coordinator),
         remove: coordinator.remove.bind(coordinator), move: coordinator.move.bind(coordinator),
         retry: coordinator.retry.bind(coordinator), skip: coordinator.skip.bind(coordinator),

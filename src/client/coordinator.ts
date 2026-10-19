@@ -4,8 +4,10 @@ import type { IWorkspaces } from '@deepseek-ai/dsh-api-workspace-controller/clie
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { QueueSettingsSource } from './settings.ts'
 import { observeTask } from './observe-task.ts'
+import { confirmTaskModel, type TaskModels } from './models.ts'
+import { resolveTaskModel, sameModel } from '../model-policy.ts'
 import { UNRESOLVED,add,adopt,claim,decode,edit,move,next,recover,remove,retry,
-  setConcurrency,setSessionId,skip,updateActive,updateTitle,type QueueState,type Task,type TaskInput } from '../queue.ts'
+  setConcurrency,setSessionId,setTaskModel,skip,updateActive,updateTitle,type QueueState,type Task,type TaskInput } from '../queue.ts'
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
   interface SessionReferenceSourceMap { goalQueue: unknown }
 }
@@ -35,12 +37,14 @@ export class Coordinator {
   private readonly settings:QueueSettingsSource
   private readonly connected:()=>boolean
   private readonly openSession?: (id:SessionId)=>void
+  private readonly models?:TaskModels
   constructor(
     sessions:ISessions,workspaces:IWorkspaces,settings:QueueSettingsSource,
-    connected:()=>boolean,openSession?:(id:SessionId)=>void
+    connected:()=>boolean,openSession?:(id:SessionId)=>void,models?:TaskModels
   ){
     this.sessions=sessions;this.workspaces=workspaces;this.settings=settings
     this.connected=connected;this.openSession=openSession
+    this.models=models
   }
   start():void {
     this.disposers.push(this.settings.subscribe(()=>{
@@ -85,10 +89,18 @@ export class Coordinator {
     this.releaseAll()
   }
   add(input:TaskInput):Promise<void>{
-    return this.write(q=>add(q,input,crypto.randomUUID()))
+    return this.saveInput(input,normalized=>this.write(q=>add(q,normalized,crypto.randomUUID())))
   }
   edit(id:string,input:TaskInput):Promise<void>{
-    return this.write(q=>edit(q,id,input))
+    return this.saveInput(input,normalized=>this.write(q=>edit(q,id,normalized)))
+  }
+  private async saveInput(input:TaskInput,save:(input:TaskInput)=>Promise<void>):Promise<void>{
+    if(!this.models)throw Error('Host 模型服务不可用')
+    const generation=this.epoch
+    const catalog=await this.models.catalog()
+    const modelSelection=input.modelSelection?resolveTaskModel(catalog,input.modelSelection):undefined
+    if(generation!==this.epoch||!this.connected()||this.closed)throw Error('连接已切换，请重新选择模型')
+    await save({...input,modelSelection})
   }
   remove(id:string):Promise<void>{return this.write(q=>remove(q,id))}
   move(id:string,offset:-1|1):Promise<void>{return this.write(q=>move(q,id,offset))}
@@ -165,28 +177,37 @@ export class Coordinator {
     try{
       const workspace=this.workspaces.list.getSnapshot().items.find(w=>w.workspaceId===task.workspaceId)
       if(!workspace)throw Error('工作区已删除')
+      if(!this.models)throw Error('Host 模型服务不可用')
+      const modelSelection=resolveTaskModel(await this.models.catalog(),task.modelSelection)
+      if(generation!==this.epoch||this.closed||!this.connected())return
+      await this.write(q=>setTaskModel(q,task.id,modelSelection))
+      if(generation!==this.epoch||this.closed||!this.connected())return
       const sessionId=await this.sessions.create({workspaceId:workspace.workspaceId})
       created=true
       if(generation!==this.epoch||this.closed)return
       await this.write(q=>setSessionId(q,task.id,sessionId))
       const held=await this.hold(task.id,sessionId,generation)
       if(generation!==this.epoch||this.closed){this.release(task.id);return}
+      const selected=await this.models.select(sessionId,modelSelection)
+      if(!sameModel(selected,modelSelection))throw Error('Host 接受的模型配置与任务选择不一致')
+      await confirmTaskModel(held.session,modelSelection,()=>generation===this.epoch&&!this.closed&&this.connected())
       // Optional tool-free auxiliary LLM title request. It never submits a user prompt
       // to the task Session; a title failure must not silently replay or cancel the task.
       if(task.generateTitle){
-        try {
-          const result=await held.session.command('/goal-queue-title '+JSON.stringify({
-            maxChars:task.titleMaxChars??24,prompt:task.prompt
-          }))
-          if(!result.ok)throw Error(result.error.message)
-          if(!result.value.matched)throw Error('Host 未安装模型标题生成命令')
-        } catch(e) {
-          console.warn('[goal-queue] optional AI title generation failed; task proceeds normally:',err(e))
+        const result=await this.models.title(held.session,'/goal-queue-title '+JSON.stringify({
+          maxChars:task.titleMaxChars??24,prompt:task.prompt,modelSelection
+        }))
+        const failure=result.matched?result.error:'Host 未安装模型标题生成命令'
+        if(failure){
+          console.warn('[goal-queue] optional AI title generation failed; task proceeds normally:',failure)
           await this.write(q=>q.activeIds.includes(task.id)
-            ?updateActive(q,task.id,{detail:'模型标题生成失败：'+err(e)+'；任务继续正常派发'}):q)
+            ?updateActive(q,task.id,{detail:'模型标题生成失败：'+failure+'；任务继续正常派发'}):q)
         }
       }
       if(generation!==this.epoch||this.closed||!this.connected()){this.release(task.id);return}
+      // A manual model switch while the auxiliary call ran must not split title/task routing.
+      const modelState=held.session.projections.faceOf('modelSelection').getSnapshot() as {next?:typeof modelSelection}|undefined
+      if(!sameModel(modelState?.next,modelSelection))throw Error('任务提交前 Session 模型配置已变化，请人工核实')
       if(task.goalMode){
         submitted=true
         const response=await held.session.command('/goal '+task.prompt.replace(/\s+/g,' ').trim())

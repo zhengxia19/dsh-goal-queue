@@ -1,4 +1,5 @@
 /** Persisted queue domain. Existing v1 snapshots are upgraded without deleting tasks. */
+import { isModelSelection, type TaskModelSelection } from './model-policy.ts'
 export const VERSION = 1 as const
 export type TaskStatus = 'pending'|'starting'|'running'|'completed'|'blocked'|'failed'|'interrupted'|'skipped'
 export type TaskSource = 'queue'|'discovered'
@@ -7,9 +8,11 @@ export interface Task {
   status: TaskStatus; source?: TaskSource; sessionId?: string; goalId?: string
   /** Opt-in, model-generated, tool-free title. */
   generateTitle?: boolean; titleMaxChars?: number
+  /** Missing only for legacy tasks or explicit dispatch-time Host default. */
+  modelSelection?: TaskModelSelection
   seenRunning?: boolean; detail?: string; createdAt: number; updatedAt: number
 }
-export type TaskInput = Pick<Task,'title'|'workspaceId'|'prompt'|'goalMode'> & Partial<Pick<Task,'generateTitle'|'titleMaxChars'>>
+export type TaskInput = Pick<Task,'title'|'workspaceId'|'prompt'|'goalMode'> & Partial<Pick<Task,'generateTitle'|'titleMaxChars'|'modelSelection'>>
 export interface QueueState {
   enabled: boolean
   /** Legacy v1 key, retained for old config compatibility. New dispatch uses activeIds. */
@@ -44,6 +47,7 @@ export function decode(value:unknown):QueueSettings|undefined {
       ||typeof raw.updatedAt!=='number'||!Number.isFinite(raw.updatedAt)
       ||(raw.source!==undefined&&raw.source!=='queue'&&raw.source!=='discovered')
       ||(raw.generateTitle!==undefined&&typeof raw.generateTitle!=='boolean')
+      ||(raw.modelSelection!==undefined&&!isModelSelection(raw.modelSelection))
       ||(raw.titleMaxChars!==undefined&&(!Number.isInteger(raw.titleMaxChars)||typeof raw.titleMaxChars!=='number'||raw.titleMaxChars<8||raw.titleMaxChars>80))
       ||(raw.sessionId!==undefined&&typeof raw.sessionId!=='string')
       ||(raw.goalId!==undefined&&typeof raw.goalId!=='string')
@@ -67,6 +71,7 @@ export function decode(value:unknown):QueueSettings|undefined {
   }}
 }
 function titleOptions(input: TaskInput): Pick<Task, 'generateTitle'|'titleMaxChars'> {
+  if(input.modelSelection!==undefined&&!isModelSelection(input.modelSelection))throw Error('任务模型配置无效')
   const max=input.titleMaxChars??24
   if(!Number.isInteger(max)||max<8||max>80)throw Error('模型标题长度必须是 8–80 的整数')
   return {generateTitle:input.generateTitle??false,titleMaxChars:max}
@@ -81,7 +86,7 @@ export function edit(q:QueueState,id:string,input:TaskInput,now=Date.now()):Queu
   return {...q,tasks:q.tasks.map(t=>{
     if(t.id!==id)return t
     if(t.status!=='pending'||t.source==='discovered')throw Error('只允许编辑尚未执行的队列任务')
-    return {...t,...input,...titleOptions(input),title:input.title.trim(),prompt:input.prompt.trim(),updatedAt:now}
+    return {...t,...input,...titleOptions(input),modelSelection:input.modelSelection,title:input.title.trim(),prompt:input.prompt.trim(),updatedAt:now}
   })}
 }
 export function remove(q:QueueState,id:string):QueueState{
@@ -112,7 +117,7 @@ export function claim(q:QueueState,id:string,now=Date.now()):QueueState{
 }
 export function updateActive(q:QueueState,id:string,patch:Partial<Task>,now=Date.now()):QueueState{
   if(!q.activeIds.includes(id))throw Error('当前任务执行权已经失效')
-  const forbidden=['id','workspaceId','title','prompt','goalMode','generateTitle','titleMaxChars','createdAt','source']
+  const forbidden=['id','workspaceId','title','prompt','goalMode','generateTitle','titleMaxChars','modelSelection','createdAt','source']
   if(forbidden.some(k=>Object.prototype.hasOwnProperty.call(patch,k)))throw Error('不允许修改执行中任务身份')
   if(patch.sessionId&&q.tasks.some(t=>t.id!==id&&t.sessionId===patch.sessionId))throw Error('Session 已归属其他任务')
   const {status,...rest}=patch
@@ -129,6 +134,13 @@ export function setSessionId(q:QueueState,id:string,sessionId:string):QueueState
   if(!q.activeIds.includes(id))throw Error('当前任务执行权已失效')
   if(q.tasks.some(t=>t.id!==id&&t.sessionId===sessionId))throw Error('Session 已归属另一任务')
   return {...q,tasks:q.tasks.map(t=>t.id===id?{...t,sessionId,updatedAt:Date.now()}:t)}
+}
+/** Freeze a resolved route in the same CAS as the active task; never retarget an existing Session. */
+export function setTaskModel(q:QueueState,id:string,modelSelection:TaskModelSelection):QueueState{
+  const task=q.tasks.find(t=>t.id===id)
+  if(!task||!q.activeIds.includes(id)||task.status!=='starting'||task.sessionId)throw Error('不能修改已有 Session 的任务模型')
+  if(!isModelSelection(modelSelection))throw Error('任务模型配置无效')
+  return {...q,tasks:q.tasks.map(t=>t.id===id?{...t,modelSelection:{...modelSelection},updatedAt:Date.now()}:t)}
 }
 export function recover(q:QueueState,reason='应用重新启动，旧会话等待核实'):QueueState{
   if(!q.enabled&&!q.activeIds.length)return q

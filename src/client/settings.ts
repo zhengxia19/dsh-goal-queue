@@ -1,5 +1,6 @@
 /** v0.2.1-rc.2 queue persistence through the official revisioned Host settings Remote. */
 import type { Context } from '@deepseek-ai/cordis'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { decode, type QueueSettings, type QueueState } from '../queue.ts'
 
 export interface QueueSettingsSnapshot {
@@ -96,7 +97,9 @@ export class HostQueueSettings implements QueueSettingsSource {
       let response: Awaited<ReturnType<typeof this.ctx.remote.settings.mutate>>
       try {
         response = await this.ctx.remote.settings.mutate(
-          'goal-queue', [{ op: 'set', path: [field], value }], this.revision,
+          // QueueState is JSON-safe by construction: decode() validates every persisted
+          // shape on read, and the Host round-trips this value through JSON anyway.
+          'goal-queue', [{ op: 'set', path: [field], value: value as unknown as JsonValue }], this.revision,
         )
       } catch (error) {
         if (generation === this.generation) this.failClosed(`Host 配置写入结果未知：${error instanceof Error ? error.message : String(error)}。请检查原 Session 后手动重载。`)

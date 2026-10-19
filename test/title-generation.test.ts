@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { add, decode, edit, EMPTY_QUEUE } from '../src/queue.ts'
 import { parseTitlePayload, boundedTitle } from '../src/title-policy.ts'
 import { registerTitleCommand } from '../src/title-command.ts'
+import { TEST_MODEL } from './model-fixture.ts'
 
 const input={workspaceId:'ws',prompt:'请完成项目测试和代码检查',goalMode:true,title:''}
 
@@ -19,7 +20,7 @@ test('AI title opt-in and limit default are persisted without breaking legacy ta
 })
 
 test('model title input rejects invalid bounds and overlong prompts',()=>{
-  assert.deepEqual(parseTitlePayload(JSON.stringify({prompt:'任务说明',maxChars:24})),{prompt:'任务说明',maxChars:24})
+  assert.deepEqual(parseTitlePayload(JSON.stringify({prompt:'任务说明',maxChars:24,modelSelection:TEST_MODEL})),{prompt:'任务说明',maxChars:24,modelSelection:TEST_MODEL})
   for(const n of [0,7,81,1.5,'24'])assert.throws(()=>parseTitlePayload(JSON.stringify({prompt:'a',maxChars:n})))
   assert.throws(()=>parseTitlePayload(JSON.stringify({prompt:'a'.repeat(8001),maxChars:24})),/8000/)
   assert.throws(()=>parseTitlePayload('invalid'))
@@ -36,12 +37,13 @@ test('Host title command performs separate tool-free LLM call and native title r
   let handler: ((x:any)=>Promise<any>)|undefined
   let streamArgs:any
   let title=''
-  const agentSession={id:'task-session', append:()=>{throw Error('must not append prompt')}}
+  const agentSession={id:'task-session',snapshotEvents:()=>[{type:'model/selection',data:TEST_MODEL}], append:()=>{throw Error('must not append prompt')}}
   const ctx={
     commands:{register(def:any){handler=def.handler;assert.equal(def.recordInput,false)}},
     agentDefaultModel:{currentSelection:()=>({provider:'test-provider',model:'test-model'})},
     llm:{async prepareCall(config:any){
-      assert.equal(config.maxTokens,128)
+      assert.equal(config.maxTokens,undefined)
+      assert.deepEqual(config,TEST_MODEL)
       return {
         config,
         stream(options:any){
@@ -58,7 +60,7 @@ test('Host title command performs separate tool-free LLM call and native title r
   registerTitleCommand(ctx as never)
   assert.ok(handler)
   const result=await handler!({
-    agent:{session:agentSession},rawInput:JSON.stringify({prompt:'请编写并测试系统',maxChars:8}),
+    agent:{session:agentSession},rawInput:JSON.stringify({prompt:'请编写并测试系统',maxChars:8,modelSelection:TEST_MODEL}),
     signal:new AbortController().signal
   })
   assert.equal(result.kind,'success')
@@ -68,4 +70,44 @@ test('Host title command performs separate tool-free LLM call and native title r
   assert.equal(streamArgs.purpose,'session-title')
   assert.equal(streamArgs.messages.length,1)
   assert.equal(streamArgs.system.includes('task-title generator'),true)
+})
+
+for(const effort of ['off','medium','high'])test(`title inherits task ${effort} effort and model budget without a fixed token cap`,async()=>{
+  const selected={...TEST_MODEL,reasoningEffort:effort}
+  let handler:any,request:any,renamed=0
+  const ctx={commands:{register(d:any){handler=d.handler}},llm:{prepareCall:async(config:any)=>{
+    assert.deepEqual(config,selected)
+    return {config:{...config,maxTokens:12288},stream:async function*(options:any){request=options;yield {type:'text-delta',index:0,text:'真实标题'};yield {type:'finish',reason:{kind:'stop'}}}}
+  }},sessionTitle:{rename(){renamed++}}}
+  registerTitleCommand(ctx as never)
+  await handler({agent:{session:{snapshotEvents:()=>[{type:'model/selection',data:selected}]}},rawInput:JSON.stringify({prompt:'工作',maxChars:24,modelSelection:selected}),signal:new AbortController().signal})
+  assert.equal(request.maxTokens,12288);assert.equal(request.reasoningEffort,effort)
+  assert.equal(request.tools,undefined);assert.equal(request.sessionId,undefined);assert.equal(renamed,1)
+})
+
+for(const outcome of ['max-tokens','error','aborted','tool-calls','missing','empty','tool-content','mismatch'] as const)test(`title ${outcome} fails without rename, exposes safe reason and never retries`,async()=>{
+  let handler:any,calls=0,renames=0
+  const selected=TEST_MODEL
+  const ctx={commands:{register(d:any){handler=d.handler}},llm:{prepareCall:async(config:any)=>({config,stream:async function*(){
+    calls++
+    if(outcome==='tool-content')yield {type:'tool-call-start',index:0,id:'x',name:'forbidden'}
+    else if(outcome!=='empty')yield {type:'text-delta',index:0,text:'测试标题'}
+    yield {type:'usage',usage:{inputTokens:10,outputTokens:128,reasoningTokens:120}}
+    if(outcome!=='missing')yield {type:'finish',reason:outcome==='error'||outcome==='aborted'?{kind:outcome,failure:{code:'RATE_LIMIT',message:'private upstream text should not leak'}}:{kind:['empty','tool-content'].includes(outcome)?'stop':outcome}}
+  }})},sessionTitle:{rename(){renames++}}}
+  registerTitleCommand(ctx as never)
+  const pending=handler({agent:{session:{snapshotEvents:()=>[{type:'model/selection',data:outcome==='mismatch'?{...selected,model:'other'}:selected}]}},rawInput:JSON.stringify({prompt:'工作',maxChars:24,modelSelection:selected}),signal:new AbortController().signal})
+  if(outcome==='mismatch')await assert.rejects(pending,/不一致/)
+  else {
+    const result=await pending
+    assert.equal(result.kind,'error');assert.doesNotMatch(result.text,/private upstream/)
+    if(['max-tokens','error','aborted','tool-calls','missing'].includes(outcome))assert.match(result.text,new RegExp(`finish=${outcome}`))
+  }
+  assert.equal(renames,0);assert.equal(calls,outcome==='mismatch'?0:1)
+})
+
+test('uncertain title persistence is not degraded into a known optional model failure',async()=>{
+  let handler:any
+  registerTitleCommand({commands:{register(d:any){handler=d.handler}},llm:{prepareCall:async(config:any)=>({config,stream:async function*(){yield {type:'text-delta',index:0,text:'标题'};yield {type:'finish',reason:{kind:'stop'}}}})},sessionTitle:{rename(){throw Error('title write unknown')}}} as never)
+  await assert.rejects(handler({agent:{session:{snapshotEvents:()=>[{type:'model/selection',data:TEST_MODEL}]}},rawInput:JSON.stringify({prompt:'工作',maxChars:24,modelSelection:TEST_MODEL}),signal:new AbortController().signal}),/write unknown/)
 })

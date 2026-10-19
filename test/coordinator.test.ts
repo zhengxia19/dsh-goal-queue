@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Coordinator } from '../src/client/coordinator.ts'
+import { TEST_MODEL, testModels } from './model-fixture.ts'
 import { EMPTY_QUEUE, add, type QueueSettings } from '../src/queue.ts'
 const pause = async()=>{for(let i=0;i<12;i++)await new Promise(resolve=>setTimeout(resolve,0))}
 const item=(label:string,goalMode=true)=>({title:label,workspaceId:'ws',prompt:`build ${label}`,goalMode})
@@ -11,7 +12,7 @@ class MockFace {
   goal: {goal:{id:string,objective:string,phase:string}} | null=null
   calls:string[]=[]
   rejectTitle=false
-  projections={faceOf:(_key:string)=>({getSnapshot:()=>this.goal,subscribe:(fn:()=>void)=>{this.goalListeners.add(fn);return()=>{this.goalListeners.delete(fn)}}})}
+  projections={faceOf:(key:string)=>({getSnapshot:()=>key==='modelSelection'?{next:TEST_MODEL}:this.goal,subscribe:(fn:()=>void)=>{this.goalListeners.add(fn);return()=>{this.goalListeners.delete(fn)}}})}
   getSnapshot=()=>this.state
   subscribe=(fn:()=>void)=>{this.listeners.add(fn);return()=>{this.listeners.delete(fn)}}
   emit(){for(const fn of this.listeners)fn();for(const fn of this.goalListeners)fn()}
@@ -37,7 +38,7 @@ function system(settings:MockSettings){
     retain(id:string){const face=faces[Number(id.slice(8))-1];return {binding:{session:face},ready:Promise.resolve({session:face}),release(){}}},
   }
   const workspaces={list:{getSnapshot:()=>({items:[{workspaceId:'ws',title:'ws',path:'/tmp/ws'}]})}}
-  const coordinator=new Coordinator(sessions as never, workspaces as never, settings as never, ()=>true)
+  const coordinator=new Coordinator(sessions as never, workspaces as never, settings as never, ()=>true,undefined,testModels)
   return {faces,coordinator}
 }
 test('goal-complete waits for actual idle, then dispatches second workspace task',async()=>{
@@ -131,7 +132,7 @@ test('AI title opt-in uses dedicated command before native Goal and does not add
   assert.equal(faces[0]!.calls.length,2)
   assert.equal(faces[0]!.calls[0]!.startsWith('/goal-queue-title '),true)
   assert.deepEqual(JSON.parse(faces[0]!.calls[0]!.slice('/goal-queue-title '.length)),{
-    maxChars:16,prompt:'build goal'
+    maxChars:16,prompt:'build goal',modelSelection:TEST_MODEL
   })
   assert.equal(faces[0]!.calls[1],'/goal build goal')
   assert.equal(faces[0]!.calls.includes('prompt'),false)

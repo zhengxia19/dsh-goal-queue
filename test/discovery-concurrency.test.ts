@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Coordinator } from '../src/client/coordinator.ts'
+import { TEST_MODEL, testModels } from './model-fixture.ts'
 import { EMPTY_QUEUE,add,adopt,decode,claim,recover,next,setConcurrency,retry,type QueueSettings,type QueueState } from '../src/queue.ts'
 
 const tick=async()=>{for(let i=0;i<16;i++)await new Promise(resolve=>setTimeout(resolve,0))}
@@ -20,8 +21,8 @@ class Face {
   watchers=new Set<()=>void>()
   getSnapshot=()=>this.state
   subscribe=(fn:()=>void)=>{this.watchers.add(fn);return()=>{this.watchers.delete(fn)}}
-  projections={faceOf:()=>({
-    getSnapshot:()=>this.goal,
+  projections={faceOf:(key:string)=>({
+    getSnapshot:()=>key==='modelSelection'?{next:TEST_MODEL}:this.goal,
     subscribe:(fn:()=>void)=>{this.watchers.add(fn);return()=>{this.watchers.delete(fn)}}
   })}
   emit(){for(const fn of this.watchers)fn()}
@@ -59,7 +60,7 @@ function setup(q:QueueState){
     }
   }
   const workspaces={list:{getSnapshot:()=>({items:[{workspaceId:'ws',sessionIds:['existing'],path:'/ws',title:'测试'}]})}}
-  const coordinator=new Coordinator(sessions as never,workspaces as never,host as never,()=>true)
+  const coordinator=new Coordinator(sessions as never,workspaces as never,host as never,()=>true,undefined,testModels)
   return {host,coordinator,faces,ordinary,summaries,created:()=>created,submitted:()=>submitted}
 }
 

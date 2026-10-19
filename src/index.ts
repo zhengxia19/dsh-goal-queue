@@ -8,7 +8,7 @@ export const name = 'goal-queue'
 export const Config = queueSchema
 export function apply(ctx: Context): void {
   // Title generation is optional: unavailable Host LLM/command services must not disable the queue.
-  ctx.inject(['commands','llm','agentDefaultModel','sessionTitle'], child => { registerTitleCommand(child) })
+  ctx.inject(['commands','llm','sessionTitle'], child => { registerTitleCommand(child) })
   // Queue data is edited by the custom dashboard, not the generic settings form.
   ctx.inject(['settings'], child => {
     child.effect(() => child.settings.configure({ auto: false }, ctx.fiber))
