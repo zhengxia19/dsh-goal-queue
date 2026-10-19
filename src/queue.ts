@@ -1,6 +1,6 @@
 /** Pure persisted queue domain. No model-generated text is accepted as completion evidence. */
 export const VERSION = 1 as const
-export type TaskStatus = 'pending' | 'starting' | 'running' | 'completed' | 'blocked' | 'failed' | 'interrupted'
+export type TaskStatus = 'pending' | 'starting' | 'running' | 'completed' | 'blocked' | 'failed' | 'interrupted' | 'skipped'
 export interface Task {
   id: string
   workspaceId: string
@@ -24,7 +24,8 @@ export interface QueueState {
 export interface QueueSettings { version: 1; queue: QueueState }
 export const EMPTY_QUEUE: QueueState = { enabled: false, activeId: null, tasks: [], error: '' }
 export const DEFAULT_SETTINGS: QueueSettings = { version: VERSION, queue: EMPTY_QUEUE }
-export const STATES: readonly TaskStatus[] = ['pending', 'starting', 'running', 'completed', 'blocked', 'failed', 'interrupted']
+export const UNRESOLVED: readonly TaskStatus[] = ['blocked', 'failed', 'interrupted']
+export const STATES: readonly TaskStatus[] = ['pending', 'starting', 'running', 'completed', 'blocked', 'failed', 'interrupted', 'skipped']
 const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
 export function decode(value: unknown): QueueSettings | undefined {
   if (!object(value) || value.version !== VERSION || !object(value.queue)) return undefined
@@ -64,6 +65,7 @@ export function edit(q: QueueState, id: string, input: Pick<Task, 'title'|'works
 }
 export function remove(q: QueueState, id: string): QueueState {
   if (q.activeId === id) throw Error('运行中的任务不可删除')
+  if (q.tasks.some(t => t.id === id && UNRESOLVED.includes(t.status))) throw Error('异常任务必须先检查并手工跳过或重新排队，不允许直接删除证据')
   return { ...q, tasks: q.tasks.filter(t => t.id !== id) }
 }
 export function move(q: QueueState, id: string, offset: -1 | 1): QueueState {
@@ -76,7 +78,8 @@ export function move(q: QueueState, id: string, offset: -1 | 1): QueueState {
   return { ...q, tasks }
 }
 export function next(q: QueueState): Task | undefined {
-  return !q.enabled || q.activeId !== null ? undefined : q.tasks.find(t => t.status === 'pending')
+  if (!q.enabled || q.activeId !== null || q.tasks.some(t => UNRESOLVED.includes(t.status))) return undefined
+  return q.tasks.find(t => t.status === 'pending')
 }
 export function claim(q: QueueState, id: string, now = Date.now()): QueueState {
   if (next(q)?.id !== id) throw Error('不是队首待执行任务或队列已被占用')
@@ -94,11 +97,22 @@ export function updateActive(q: QueueState, id: string, patch: Partial<Task>, no
     tasks: q.tasks.map(t => t.id === id ? { ...t, ...rest, ...(status === undefined ? {} : { status }), updatedAt: now } : t) }
 }
 export function recover(q: QueueState, reason = '桌面应用已重新启动，旧执行状态未确认，请人工检查对应 Session'): QueueState {
-  if (!q.activeId) return q
+  if (q.activeId === null && !q.enabled) return q
   return { ...q, enabled: false, activeId: null, error: reason, tasks: q.tasks.map(t => t.id === q.activeId ? { ...t, status: 'interrupted', detail: reason, updatedAt: Date.now() } : t) }
 }
 export function retry(q: QueueState, id: string): QueueState {
   if (q.activeId === id) throw Error('不能重排正在执行的任务')
   return { ...q, tasks: q.tasks.map(t => t.id === id && ['failed','blocked','interrupted'].includes(t.status)
     ? { ...t, status: 'pending', sessionId: undefined, goalId: undefined, seenRunning: false, detail: '重试将创建新 Session；请确认旧会话未继续运行', updatedAt: Date.now() } : t) }
+}
+
+/** Explicit human disposition. Skipping means the operator has inspected the old Session;
+ * it is not a Goal completion signal, and cannot be undone automatically. */
+export function skip(q: QueueState, id: string, now = Date.now()): QueueState {
+  if (q.activeId === id) throw Error('正在执行的任务不能跳过；请先停止并核实旧 Session')
+  const task = q.tasks.find(t => t.id === id)
+  if (!task || !UNRESOLVED.includes(task.status)) throw Error('只能手工跳过已阻塞、失败或中断的任务')
+  return { ...q, tasks: q.tasks.map(t => t.id !== id ? t : {
+    ...t, status: 'skipped', detail: '人工确认跳过；不代表原任务执行成功', updatedAt: now,
+  }) }
 }

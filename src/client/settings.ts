@@ -11,6 +11,8 @@ export interface QueueSettingsSource {
   getSnapshot(): QueueSettingsSnapshot
   subscribe(listener: () => void): () => void
   set(field: 'queue', value: QueueState): Promise<void>
+  refresh(): Promise<void>
+  failClosed(reason: string): void
 }
 
 /** The Host profile owns the queue. A failed read or CAS write always fails closed. */
@@ -38,6 +40,12 @@ export class HostQueueSettings implements QueueSettingsSource {
       void this.refresh()
     }))
     void this.refresh()
+  }
+
+  /** Quarantine an unknown remote execution/write outcome; never substitute defaults. */
+  failClosed(reason: string): void {
+    this.revision = undefined
+    this.publish({ status: 'error', error: reason })
   }
 
   getSnapshot(): QueueSettingsSnapshot { return this.snapshot }
@@ -85,9 +93,15 @@ export class HostQueueSettings implements QueueSettingsSource {
         throw new Error(this.snapshot.error ?? '持久化未就绪；拒绝执行队列操作')
       }
       const generation = this.generation
-      const response = await this.ctx.remote.settings.mutate(
-        'goal-queue', [{ op: 'set', path: [field], value }], this.revision,
-      )
+      let response: Awaited<ReturnType<typeof this.ctx.remote.settings.mutate>>
+      try {
+        response = await this.ctx.remote.settings.mutate(
+          'goal-queue', [{ op: 'set', path: [field], value }], this.revision,
+        )
+      } catch (error) {
+        if (generation === this.generation) this.failClosed(`Host 配置写入结果未知：${error instanceof Error ? error.message : String(error)}。请检查原 Session 后手动重载。`)
+        throw error
+      }
       if (!response.ok) {
         this.revision = undefined
         this.publish({ status: 'error', error: `写入失败（${response.error.code}）：${response.error.message}。队列已停止；请重新加载。` })

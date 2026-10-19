@@ -20,10 +20,12 @@ class MockFace {
 class MockSettings {
   value:QueueSettings
   listeners=new Set<()=>void>()
+  failOnStatus: string | null = null
   constructor(queue=EMPTY_QUEUE){this.value={version:1,queue}}
-  getSnapshot=()=>({value:this.value})
+  getSnapshot=()=>({status:'ready',value:this.value})
+  failClosed(_reason:string){}
   subscribe=(fn:()=>void)=>{this.listeners.add(fn);return()=>{this.listeners.delete(fn)}}
-  async set(_key:string, queue:typeof EMPTY_QUEUE){this.value={version:1,queue};for(const listener of this.listeners)listener()}
+  async set(_key:string, queue:typeof EMPTY_QUEUE){if(this.failOnStatus && queue.tasks.some(t=>t.status===this.failOnStatus)) throw Error('模拟状态写入失败');this.value={version:1,queue};for(const listener of this.listeners)listener()}
 }
 function system(settings:MockSettings){
   const faces:MockFace[]=[]
@@ -38,7 +40,7 @@ function system(settings:MockSettings){
 }
 test('goal-complete waits for actual idle, then dispatches second workspace task',async()=>{
   const q={...add(add(EMPTY_QUEUE,item('A'),'a'),item('B',false),'b'),enabled:true}
-  const settings=new MockSettings(q), {faces,coordinator}=system(settings);coordinator.start();await pause()
+  const settings=new MockSettings(q), {faces,coordinator}=system(settings);coordinator.start();await pause();await coordinator.enable(true);await pause()
   assert.equal(faces.length,1); assert.equal(settings.value.queue.activeId,'a')
   faces[0]!.state.running=true;faces[0]!.emit();await pause()
   faces[0]!.goal!.goal.phase='complete';faces[0]!.emit();await pause()
@@ -52,14 +54,14 @@ test('goal-complete waits for actual idle, then dispatches second workspace task
 })
 test('goal blocker halts pipeline and does not start next task',async()=>{
   const q={...add(add(EMPTY_QUEUE,item('A'),'a'),item('B'),'b'),enabled:true}
-  const settings=new MockSettings(q), {faces,coordinator}=system(settings);coordinator.start();await pause()
+  const settings=new MockSettings(q), {faces,coordinator}=system(settings);coordinator.start();await pause();await coordinator.enable(true);await pause()
   faces[0]!.goal!.goal.phase='blocked';faces[0]!.emit();await pause()
   assert.equal(settings.value.queue.enabled,false);assert.equal(settings.value.queue.tasks[0]?.status,'blocked');assert.equal(faces.length,1)
   coordinator.dispose()
 })
 test('normal task requires witnessed running before idle',async()=>{
   const q={...add(EMPTY_QUEUE,item('A',false),'a'),enabled:true}
-  const settings=new MockSettings(q),{faces,coordinator}=system(settings);coordinator.start();await pause()
+  const settings=new MockSettings(q),{faces,coordinator}=system(settings);coordinator.start();await pause();await coordinator.enable(true);await pause()
   assert.equal(settings.value.queue.tasks[0]?.status,'running')
   faces[0]!.state.running=false;faces[0]!.emit();await pause()
   // The mocked prompt emits a running event before returning; that is a valid witness.
@@ -77,7 +79,7 @@ test('an ordinary task is not lost after prompt acceptance and idle',async()=>{
   const q={...add(EMPTY_QUEUE,item('fast',false),'fast'),enabled:true}
   const settings=new MockSettings(q),{faces,coordinator}=system(settings)
   coordinator.start()
-  await pause()
+  await pause();await coordinator.enable(true);await pause()
   assert.equal(faces.length,1)
   faces[0]!.state.running=false;faces[0]!.emit();await pause()
   assert.equal(settings.value.queue.tasks[0]?.status,'completed')
@@ -92,5 +94,29 @@ test('connection reset drops held session and marks old active goal interrupted 
   assert.equal(settings.value.queue.enabled,false)
   assert.equal(settings.value.queue.tasks[0]?.status,'interrupted')
   assert.equal(faces.length,0)
+  coordinator.dispose()
+})
+
+test('T04 Goal completion state write failure blocks the following queue task', async()=>{
+  const q=add(add(EMPTY_QUEUE,item('A'),'a'),item('B'),'b')
+  const settings=new MockSettings(q), {faces,coordinator}=system(settings)
+  coordinator.start();await pause();await coordinator.enable(true);await pause()
+  faces[0]!.state.running=true;faces[0]!.emit();await pause()
+  settings.failOnStatus='completed'
+  faces[0]!.goal!.goal.phase='complete';faces[0]!.state.running=false;faces[0]!.emit();await pause()
+  assert.equal(faces.length,1)
+  assert.equal(settings.value.queue.enabled,false)
+  assert.equal(settings.value.queue.tasks[0]?.status,'interrupted')
+  coordinator.dispose()
+})
+
+test('T04 command accepted but running-state commit lost blocks subsequent tasks', async()=>{
+  const q=add(add(EMPTY_QUEUE,item('A'),'a'),item('B'),'b')
+  const settings=new MockSettings(q), {faces,coordinator}=system(settings)
+  settings.failOnStatus='running'
+  coordinator.start();await pause();await coordinator.enable(true);await pause()
+  assert.equal(faces.length,1)
+  assert.equal(settings.value.queue.enabled,false)
+  assert.equal(settings.value.queue.tasks[0]?.status,'interrupted')
   coordinator.dispose()
 })

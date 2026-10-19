@@ -40,7 +40,8 @@ export function apply(ctx: Context): void {
       operations: {
         add: coordinator.add.bind(coordinator), edit: coordinator.edit.bind(coordinator),
         remove: coordinator.remove.bind(coordinator), move: coordinator.move.bind(coordinator),
-        retry: coordinator.retry.bind(coordinator), enable: coordinator.enable.bind(coordinator),
+        retry: coordinator.retry.bind(coordinator), skip: coordinator.skip.bind(coordinator),
+        enable: coordinator.enable.bind(coordinator), refresh: settings.refresh.bind(settings),
         open: coordinator.open.bind(coordinator),
       },
     }),

@@ -1,6 +1,6 @@
 {
   "name": "dsh-goal-queue",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Native cross-workspace serial goal queue for DeepSeek Harness Desktop v0.2.1-rc.2",
   "type": "module",

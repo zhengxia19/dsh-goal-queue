@@ -59,3 +59,37 @@ test('reconnect hides old queue until new Host read is confirmed', async () => {
   assert.equal(settings.getSnapshot().status, 'ready')
   settings.dispose()
 })
+
+test('T03 Host read fails without presenting a trusted empty queue', async () => {
+  const host = harness()
+  host.remote.settings.describe = async () => ({ ok: false, error: { code: 'settings/unavailable', message: 'Host disconnected' } }) as never
+  const settings = new HostQueueSettings(host.ctx as never)
+  await settings.refresh()
+  assert.equal(settings.getSnapshot().status, 'error')
+  assert.equal(settings.getSnapshot().value, undefined)
+  assert.match(settings.getSnapshot().error ?? '', /Host disconnected/)
+  await assert.rejects(settings.set('queue', EMPTY_QUEUE), /Host disconnected/)
+  settings.dispose()
+})
+
+test('T03 corrupted persisted queue is an error, never silently cleared', async () => {
+  const host = harness()
+  host.remote.settings.describe = async () => ({ ok: true, value: { namespaces: [{ ns: 'goal-queue', revision: 1, value: { version: 1, queue: { enabled: true, tasks: 'broken' } } }] } }) as never
+  const settings = new HostQueueSettings(host.ctx as never)
+  await settings.refresh()
+  assert.equal(settings.getSnapshot().status, 'error')
+  assert.equal(settings.getSnapshot().value, undefined)
+  await assert.rejects(settings.set('queue', EMPTY_QUEUE))
+  settings.dispose()
+})
+
+test('T04 thrown Host mutation leaves an explicit error and no unverified local success', async () => {
+  const host = harness()
+  const settings = new HostQueueSettings(host.ctx as never)
+  await settings.refresh()
+  host.remote.settings.mutate = async () => { throw Error('network timed out after possible commit') }
+  await assert.rejects(settings.set('queue', { ...EMPTY_QUEUE, enabled: true }), /network timed out/)
+  assert.equal(settings.getSnapshot().status, 'error')
+  assert.match(settings.getSnapshot().error ?? '', /结果未知/)
+  settings.dispose()
+})

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { EMPTY_QUEUE, add, claim, decode, edit, move, next, recover, remove, retry, updateActive } from '../src/queue.ts'
+import { EMPTY_QUEUE, add, claim, decode, edit, move, next, recover, remove, retry, skip, updateActive } from '../src/queue.ts'
 const input = (x:string) => ({title:x,workspaceId:`ws-${x}`,prompt:`do ${x}`,goalMode:true})
 const with2 = () => add(add(EMPTY_QUEUE,input('A'),'a',10),input('B'),'b',20)
 test('state decode rejects corruption, unknown status, duplicate IDs and inconsistent ownership',()=>{
@@ -36,4 +36,36 @@ test('manual ordering skips completed or blocked history entries',()=>{
   q={...q,tasks:q.tasks.map(t=>t.id==='b'?{...t,status:'completed' as const}:t)}
   q=move(q,'c',-1)
   assert.deepEqual(q.tasks.map(t=>t.id),['c','b','a'])
+})
+
+test('T01 recovering a previously enabled idle queue disarms without discarding pending tasks', () => {
+  const before = { ...with2(), enabled: true, activeId: null }
+  const after = recover(before, '重启需要人工确认')
+  assert.equal(after.enabled, false)
+  assert.equal(after.tasks.length, 2)
+  assert.equal(after.tasks[0]?.status, 'pending')
+  assert.equal(after.error, '重启需要人工确认')
+  assert.equal(next(after), undefined)
+})
+
+test('T02 abnormal history must be explicitly retried or skipped before a later pending task', () => {
+  let q = with2()
+  q = { ...q, enabled: true, tasks: q.tasks.map(t => t.id === 'a' ? { ...t, status: 'interrupted' as const, sessionId: 'old-a' } : t) }
+  assert.equal(next(q), undefined)
+  assert.throws(() => remove(q, 'a'), /异常任务必须先检查/)
+  q = skip(q, 'a')
+  assert.equal(q.tasks[0]?.status, 'skipped')
+  assert.equal(q.tasks[0]?.sessionId, 'old-a')
+  assert.equal(next(q)?.id, 'b')
+  assert.throws(() => skip(q, 'a'), /只能手工跳过/)
+})
+
+test('T02 a blocked or failed task also prevents implicit leapfrogging', () => {
+  for (const status of ['blocked', 'failed'] as const) {
+    let q = with2()
+    q = { ...q, enabled: true, tasks: q.tasks.map(t => t.id === 'a' ? { ...t, status } : t) }
+    assert.equal(next(q), undefined)
+    q = skip(q, 'a')
+    assert.equal(next(q)?.id, 'b')
+  }
 })

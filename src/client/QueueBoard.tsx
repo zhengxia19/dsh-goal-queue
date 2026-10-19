@@ -4,26 +4,28 @@ import { createPortal } from 'react-dom'
 import type { PropsStore, PropsHooks, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { QueueSettingsSource } from './settings.ts'
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { DEFAULT_SETTINGS, type QueueSettings, type Task } from '../queue.ts'
+import { DEFAULT_SETTINGS, UNRESOLVED, type Task } from '../queue.ts'
 import type { viewStore } from './store.ts'
 import type { Coordinator } from './coordinator.ts'
 
-type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'enable' | 'open'>
+type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open'> & {refresh: () => Promise<void>}
 export type BoardProps = PropsStore<typeof viewStore> & PropsRuntime<'shell.overlay'> &
   PropsHooks<{queueSettings: QueueSettingsSource, workspaces: {
     getSnapshot():WorkspaceSnapshot;subscribe(listener:()=>void):()=>void
   }}> & {operations:Ops}
 const labels: Record<Task['status'], string> = {
   pending:'待执行', starting:'启动中', running:'运行中', completed:'已完成',
-  blocked:'已阻塞', failed:'失败', interrupted:'待人工恢复',
+  blocked:'已阻塞', failed:'失败', interrupted:'待人工恢复', skipped:'人工跳过',
 }
 function message(error: unknown):string { return error instanceof Error ? error.message : String(error) }
 export function QueueBoard(props:BoardProps) {
   const open = props.useStore(s=>s.open)
   const error = props.useStore(s=>s.error)
-  const settings = props.useQueueSettings(s=>s.value ?? DEFAULT_SETTINGS)
+  const loadingState = props.useQueueSettings(s=>s)
+  const settings = loadingState.value ?? DEFAULT_SETTINGS
   const workspaces = props.useWorkspaces(s=>s)
   const q = settings.queue
+  const blockers = q.tasks.filter(t => UNRESOLVED.includes(t.status))
   const [editing,setEditing] = useState<string|null>(null)
   const [title,setTitle] = useState('')
   const [workspaceId,setWorkspaceId] = useState('')
@@ -37,6 +39,21 @@ export function QueueBoard(props:BoardProps) {
     return ()=>window.removeEventListener('keydown',onKey)
   },[open,props.actions])
   if(!open) return null
+  // Errors must never be misrepresented as a real empty queue. Mutations are not mounted
+  // until a fresh, validated Host configuration snapshot has arrived.
+  if (loadingState.status !== 'ready') return createPortal(<div className="gq-root" role="dialog" aria-modal="true" aria-label="DSH 任务队列配置状态">
+    <header className="gq-head"><div><h1>DSH Goal Queue</h1><span>跨工作区串行任务</span></div>
+      <button type="button" onClick={()=>props.actions.close()}>关闭</button></header>
+    <main className="gq-list">
+      {loadingState.status === 'loading'
+        ? <div className="gq-notes" role="status">正在读取 Host 任务队列配置；读取完成前不能操作或派发任务。</div>
+        : <div className="gq-error" role="alert">队列配置读取或保存失败：{loadingState.error ?? '未知错误'}。尚未读取到可信任务状态，原有数据不代表丢失。请先核对旧 Session，随后重试读取。</div>}
+      {loadingState.status === 'error' && <button type="button" onClick={()=>{
+        void props.operations.refresh().catch(e=>props.actions.error(message(e)))
+      }}>重试读取配置</button>}
+      {error && <div className="gq-error" role="alert">操作失败：{error}</div>}
+    </main>
+  </div>, document.body)
   const change = async (op:()=>Promise<void>)=> {
     try { await op();props.actions.error('') }
     catch(e){props.actions.error(message(e))}
@@ -61,7 +78,7 @@ export function QueueBoard(props:BoardProps) {
       <div><h1>DSH Goal Queue</h1><span>跨工作区串行任务 · {q.tasks.filter(t=>t.status==='pending').length} 项待执行</span></div>
       <div className="gq-actions">
         <button type="button" onClick={newForm}>添加任务</button>
-        <button type="button" className={q.enabled?'gq-warn':'gq-primary'} onClick={()=>{void change(()=>props.operations.enable(!q.enabled))}}>
+        <button type="button" className={q.enabled?'gq-warn':'gq-primary'} disabled={!q.enabled && blockers.length>0} onClick={()=>{void change(()=>props.operations.enable(!q.enabled))}}>
           {q.enabled?'暂停队列':'启动队列'}
         </button>
         <button type="button" onClick={()=>props.actions.close()}>关闭</button>
@@ -70,6 +87,7 @@ export function QueueBoard(props:BoardProps) {
     <div className="gq-notes">
       {q.enabled?'队列已启用：每次仅派发一项任务。':'队列已暂停：不会启动下一项；已有任务不会被中断。'}
       {busy?' 当前执行槽已占用。':''}
+      {blockers.length>0 && <div className="gq-error" role="alert">有 {blockers.length} 项异常任务尚未处理，已禁止启动后续任务。先查看旧 Session，明确选择重新排队或人工跳过。</div>}
       <div>目标模式以 DSH Goal 的 complete / blocked 为准；普通模式以已观察到的运行→空闲为准，不代表代码已通过人工验收。</div>
     </div>
     {q.error && <div className="gq-error" role="alert">{q.error}</div>}
@@ -93,12 +111,16 @@ export function QueueBoard(props:BoardProps) {
             <button type="button" disabled={!editable||!q.tasks.slice(0,i).some(t=>t.status==='pending')} onClick={()=>{void change(()=>props.operations.move(task.id,-1))}}>上移</button>
             <button type="button" disabled={!editable||!q.tasks.slice(i+1).some(t=>t.status==='pending')} onClick={()=>{void change(()=>props.operations.move(task.id,1))}}>下移</button>
             <button type="button" disabled={!editable} onClick={()=>editForm(task)}>编辑</button>
-            <button type="button" disabled={task.id===q.activeId} onClick={()=>{void change(()=>props.operations.remove(task.id))}}>删除</button>
+            <button type="button" disabled={task.id===q.activeId||UNRESOLVED.includes(task.status)} onClick={()=>{void change(()=>props.operations.remove(task.id))}}>删除</button>
             {task.sessionId&&<button type="button" onClick={()=>{props.operations.open(task.id);props.actions.close()}}>打开 Session</button>}
-            {['failed','blocked','interrupted'].includes(task.status)&&<button type="button" onClick={()=>{
+            {UNRESOLVED.includes(task.status)&&<button type="button" onClick={()=>{
               if(!window.confirm('重新排队将创建新的 Session。请先确认旧 Session 已停止，防止重复修改代码。'))return
               void change(()=>props.operations.retry(task.id))
             }}>重新排队</button>}
+            {UNRESOLVED.includes(task.status)&&<button type="button" onClick={()=>{
+              if(!window.confirm('只有确认旧 Session 已停止或妥善处理之后，才能跳过该异常任务。跳过不会标记原任务成功；确认人工跳过吗？'))return
+              void change(()=>props.operations.skip(task.id))
+            }}>人工跳过</button>}
           </div>
         </article>
       })}
