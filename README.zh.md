@@ -1,73 +1,69 @@
-# DSH Goal Queue — DPH / DSH Desktop 跨工作区串行任务队列
+# DSH 任务队列插件 — DPH Desktop V0.2.1-rc.2
 
-> **当前状态：v0.2.1 源码预览版**，目标 DPH / DeepSeek Harness Desktop **V0.2.1-rc.2**。自动化与 GitHub CI 只能验证模拟执行、类型及构建；**真实 Windows Desktop 安装、原生界面和模型端到端测试仍待 T06 验收，不能宣称正式发布。**
+> 插件版本：**0.3.0 源码预览版**。当前基于 DSH 官方公开 Client Session API。GitHub CI 的构建、类型检查与模拟测试不代替 Windows DPH Desktop 端到端验收。请在隔离的 Desktop Profile / 测试工作区先行试用。
 
-## 功能及范围
+## 功能
 
-- 在客户端侧边栏增加 **任务队列**，支持添加、编辑、删除、手工上移／下移、选择已登记 Workspace。
-- 每项任务独立选择原生 Goal `/goal` 或普通 Prompt；**目标模式默认勾选**。
-- 队列内部同时最多派发 1 项，每项新建独立 Session；它**不接管其他客户端、其他队列或手工打开的 Session**。
-- Goal 只有在对应 `goal.id` 匹配、持久 Goal 投影 `phase=complete` 且 Session 空闲时才完成；Goal `blocked/paused` 会暂停队列。
-- 普通模式必须观测 Session 从 `running` 到空闲才标记完成。**执行结束不是代码验收通过**。
-- 队列数据存储在 DSH Host 对应 Cordis 插件的 `queue` volatile 配置，使用修订号 CAS 写入；不会存储第二份 Goal 数据。
-- 关闭管理面板不停止调度；点击**暂停队列只停止后续派发，不取消当前 Session**。
+- 打开「任务队列」面板时主动调用 \`sessions.refresh()\`，读取当前 Host 会话目录，将**已在运行且非 Subagent** 的 Session 按 Session ID 去重纳入任务列表。
+- 导入的原 Session **只关联、观察，不重新提交 prompt，也不新建 Goal**；可以打开原 Session 检查进度。列表刷新可重复执行，但不会产生同一 Session 的多个任务。
+- 支持队列并发数 **1–8**，默认 **1**。并发名额包括新派发任务和已纳入的原有运行 Session。降低并发数**不终止**正在运行的 Session；超过上限时只禁止继续派发。
+- 仍可添加、编辑、删除待执行项，在 DSH 已登记工作区间选择、上移与下移排序。新建任务每项独立创建 Session，并使用普通提示词或原生 \`/goal\`。
+- 队列**启动／重连后处于暂停状态**。已持久化的活动任务不会自动重新发送，而是标记为 \`interrupted\` 等待核实；打开面板扫描时，只有 Host 确认**相同 Session ID 仍在运行**的项目才重新关联，仅恢复观察。
+- 用户可在旧 Goal 已停止且具有可恢复的持久目标时，明确点击 **「激活旧 Goal」**，在**原 Session** 执行 \`/goal resume\`；普通任务不作不确定的自动续发，可以人工重排到新 Session。
+- 标题字段可以留空。普通模式保留 DSH 原生会话命名路径，不人工注入额外 prompt 或重命名；当 DSH Session 列表提供真正的 \`title\` 时同步显示。**纯 \`/goal\` 命令不会触发 DSH 的首条用户消息标题生成器**，因此纯 Goal 留空时暂显示「未命名目标任务」，不会声称已有模型生成标题。
 
-## v0.2.1 安全修订（T01–T05）
+## 重要边界
 
-1. **重启/重连不自动续跑**：Client 启动及连接切换时，运行期启动授权一律清除。若 Host 曾保存 `enabled=true`，会保守写回 `enabled=false`；即使 `activeId=null` 且仍有待执行项，也不会自动创建 Session。只有当前连接中用户再次点击“启动队列”才可派发。
-2. **异常任务阻断**：只要存在 `interrupted`、`blocked` 或 `failed` 任务，后续所有 `pending` 任务均不得启动。用户必须先查看旧 Session，再对异常项明确选择**重新排队**或**人工跳过**。
-3. **不隐瞒配置故障**：加载中、读取错误、正常读取分别展示；故障期间不显示误导性的“空队列”，也不允许编辑或启动。支持“重试读取配置”。
-4. **不确定执行结果时安全停止**：Session 已创建但记录失败、命令可能已提交但响应不确定、配置写入结果未知等情形全部禁止继续派发。若无法可靠保存失败状态，进入本机隔离错误状态，要求人工检查旧 Session 并重新读取 Host 配置。
-5. **故障注入回归**：涵盖重启/重连无活动项、阻塞项、Host 配置不可用、部分提交及响应丢失、快速点击“启动/暂停”竞态等；完整测试请运行 `npm test`。
+**并发数不是系统级总锁。** 本插件只约束自己掌握并已纳入的任务。应用或其他客户端在上次扫描后新启动的独立 Session，可能暂时不计入名额；用户可点击「刷新运行任务」。这也不改变 Strata 后端并发能力，多个 DPH 客户端同时连接 Host 尚无分布式锁。
 
-### 任务状态
+**读取正在运行的任务并不等于自动恢复历史命令。** 自动扫描只导入 Host 当前报告为 \`running=true\` 的 DSH Session；不扫描任意操作系统进程，不自动激活仍处于 idle 的 Goal，也不重发普通任务指令。Goal \`phase=complete\` 且 Session 空闲才被标为完成；普通模式要求证实原 Session 已观察到 running → idle；这个「完成」不等于代码测试或人工验收通过。
 
-`pending → starting → running → completed` 为正常路径。`blocked`、`failed`、`interrupted` 是未决异常，**将阻断整个队列**。人工处理后可转成 `pending`（重新排队，创建新 Session）或 `skipped`（人工确认跳过，保留记录及旧 Session ID）。`skipped` 不代表任务执行成功。
+**暂停调度与停止 Agent 是两回事。** 「暂停队列」不取消已经运行的 Session；重新打开面板、重连、修改并发数都不会擅自停止原任务。旧普通任务状态未知时应核对原会话，再选择重试或跳过。
 
-### 正确的恢复操作
+## 如何操作
 
-1. 启动或连接恢复后，打开侧边栏“任务队列”。队列默认暂停；检查任务记录，特别是 `interrupted` 项的旧 Session。
-2. **确认旧 Session 是否仍在修改代码或执行工具**，必要时在 DSH 中由用户手工停止旧 Session；插件不会替你取消旧工作。
-3. 根据实际结果，逐项点击“重新排队”或“人工跳过”。注意：重新排队创建**新 Session**，可能重复修改工作区文件；旧 Session 不会继承到新任务。
-4. 待无未决异常后，明确点击“启动队列”。重新启动授权仅在**本次客户端连接**有效。
-5. 不允许多窗口共享本队列同时执行；尚无跨客户端分布式锁。也无法约束用户另外手动启动的 Session。
+1. Windows 上打开 DPH Desktop，并确保其 Session 与工作区列表已经同步。
+2. 打开侧边栏「任务队列」，自动扫描当前运行的 Session，面板顶部有「刷新运行任务」按钮。
+3. 在「最大并发」下拉框选择 1–8；建议首次使用仍保留默认 1。
+4. 添加新任务，选择工作区与普通/目标模式。**标题可以留空**，任务说明不能为空。
+5. 首次启动或断连重启后，不会自动续发。确认已纳入旧会话的状态，处理 \`interrupted\`、\`blocked\`、\`failed\` 项后，手工点击「启动队列」。
+6. 对仍正在运行的旧任务，只观察它完成；对需要续行、且已空闲的旧 Goal，可点击「激活旧 Goal」，不会重新创建 Session。
+7. 如果准备重试或人工跳过旧任务，请先在 DPH 中核实原 Session 已停止，防止多次修改相同工作区。
 
-## 源码构建（Windows PowerShell）
+### 旧版队列迁移
 
-需要 Node.js >=22.19（推荐 Node.js 24）、npm、Git，以及 npm Registry 可达。`package.json` 固定主要 DSH API 构建依赖 `0.2.1-rc.2`；`npm install --legacy-peer-deps` 用来处理该预发布版的 peer 依赖约束，**不能说明运行时其他版本兼容**。
+0.2.x 的持久队列数据使用 \`version=1\`、\`activeId\`。0.3.0 **仍接受旧版本**，在读取时派生 \`activeIds\` 与默认并发数 1，保留旧任务 ID、顺序、Session ID 和执行历史。首次保存会一起写入新的 \`activeIds\`、\`maxConcurrent\`、\`source\`。解析失败必须报错，不可覆盖成空队列。新版本执行并保存之后，不应直接降级到旧 0.2.x 插件。
 
-```powershell
- git clone https://github.com/zhengxia19/dsh-goal-queue.git
- cd dsh-goal-queue
- npm install --legacy-peer-deps
- npm test
- npm run typecheck
- npm run build
-```
+### 原生自动命名的准确行为
 
-生成 `lib/` 后仍需通过**实际 Desktop Profile 支持的插件安装入口**加载。建议先执行 `dsh plugin --help` 核实命令，再确认 CLI 操作的 Profile 正是桌面应用正在使用的 Profile。部分第三方 Desktop 的 Extension Dock 只接受 npm Registry 包名，**不接受 GitHub URL 或本地路径**；当前包标记 `private: true`，尚未在 npm 发布，不能声称可直接通过市场安装。不要直接修改桌面程序内置包或覆盖用户既有插件环境。
+官方 \`@deepseek-ai/dsh-session-title\` 从符合条件的用户消息生成回退标题；如果 Desktop 组合了 \`@deepseek-ai/dsh-session-title-first-prompt-llm\`，才可能由模型异步生成标题。模型标题不是所有部署都保证存在；插件只同步 DSH 实际提供的非空 \`title\`，不会把 \`displayTitle\` 的工作区名称当作模型生成结果。
 
-## 使用方式
+Goal 通过独立的 \`/goal\` 命令执行，续行消息来源为 \`kind: 'goal'\`，不满足默认首消息标题服务仅接受 \`kind: 'user'\` 的条件。若将来需要纯 Goal 的模型标题，应另行实现受控的辅助标题推理接口与额外请求配额，并通过实际端到端测试；当前版本不在 Goal Session 中伪造普通用户消息。
 
-在 DSH 里登记测试工作区 → 打开侧边栏“任务队列” → 添加任务（标题、工作区、目标模式、说明）→ 上移/下移 → **点击启动队列**。每项任务有“打开 Session”可检查进度及证据。关闭面板或按 Esc 不会关闭当前会话，也不会停止已经授权的本次队列。
+## 开发与构建
 
-## 发布与验收边界
+需要 Node.js >= 22.19（推荐 24）、npm 和 Git。依赖针对 DSH \`0.2.1-rc.2\`；安装方式需与实际 DPH Desktop Profile 对齐。
 
-| 门槛 | 标准 |
-|---|---|
-| T01–T05 | 回归测试、TypeScript、构建和 GitHub CI 全通过；故障注入证明无自动重发 |
-| T06 | 在真实 **DPH Desktop V0.2.1-rc.2 / Windows** 环境安装、运行多工作区、Goal、断连、错误、卸载的端到端验证 |
-| 正式发布 | **必须 T06 独立验收通过**，不能以 CI 成功替代 |
+\`\`\`powershell
+git clone https://github.com/zhengxia19/dsh-goal-queue.git
+cd dsh-goal-queue
+npm install --legacy-peer-deps
+npm test
+npm run typecheck
+npm run build
+\`\`\`
 
-完整原子验收步骤见 [DPH 实机验收清单](docs/DPH_V0.2.1-rc.2_实机验收清单.md)；修订记录与独立复审见 [2026-10-19 修订复审报告](docs/修订复审_2026-10-19.md)。
+\`npm test\` 使用模拟 Host/Session，测试并发、数据兼容、自动发现、原 Session 恢复及异常停止。生产 Desktop Profile 的插件安装不能以源码构建成功代替。
 
-## 主要文件
+## 关键源码
 
-- `src/queue.ts`：队列模型、异常阻断和人工跳过。
-- `src/client/coordinator.ts`：启动授权、单任务调度、Goal 判定和故障隔离。
-- `src/client/settings.ts`：Host 配置读取和 CAS 更新。
-- `src/client/QueueBoard.tsx`：任务编辑、状态、恢复及异常界面。
-- `test/`：原有模拟测试和新增故障注入回归。
-- `AGENTS.md`：实施不可破坏的核心约束。
+- [队列状态与旧数据迁移](src/queue.ts)
+- [多 Session 调度、发现与恢复](src/client/coordinator.ts)
+- [原生 Session/Goal 完成判据](src/client/observe-task.ts)
+- [配置 CAS 读写](src/client/settings.ts)
+- [管理面板](src/client/QueueBoard.tsx)
+- [新增功能测试](test/discovery-concurrency.test.ts)
+- [功能扩展复审及发布边界](docs/功能扩展复审_2026-10-19.md)
+- [实机验收清单](docs/DPH_V0.2.1-rc.2_实机验收清单.md)
 
-许可：MIT。参考 [DeepSeek Harness 官方仓库](https://github.com/deepseek-ai/deepseek-harness)，插件自身未修改官方 Desktop 内部代码。
+此项目暂未在 npm 发布（\`private: true\`），也尚未通过真实 Windows DPH Desktop V0.2.1-rc.2 的安装和运行验收，不能宣称正式发布。
