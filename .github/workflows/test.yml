@@ -14,6 +14,3 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
-      - name: Export normalized lockfile (temporary)
-        run: |
-          node -e 'const f=require("fs");const s=f.readFileSync("package-lock.json","utf8");for(let i=0;i<s.length;i+=1500)console.log("LOCK_PART:"+(i/1500)+":"+JSON.stringify(s.slice(i,i+1500)))'
