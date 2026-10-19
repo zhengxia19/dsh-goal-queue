@@ -1,280 +1,312 @@
-/** Single-renderer orchestration of persisted queue items via supported DSH Client APIs. */
+/** Client-owned queue scheduler; never replays an unknown remote command. */
 import type { ISessions, SessionFace, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { IWorkspaces } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { QueueSettingsSource } from './settings.ts'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { QueueSettingsSource } from './settings.ts'
 import { observeTask } from './observe-task.ts'
-import { UNRESOLVED, add, claim, decode, edit, move, next, recover, remove, retry, skip, updateActive,
-  type QueueState, type Task } from '../queue.ts'
-
+import { UNRESOLVED,add,adopt,claim,decode,edit,move,next,recover,remove,retry,
+  setConcurrency,setSessionId,skip,updateActive,updateTitle,type QueueState,type Task } from '../queue.ts'
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
   interface SessionReferenceSourceMap { goalQueue: unknown }
 }
-
 interface Active {
-  taskId: string
-  epoch: number
-  session: SessionFace
-  reference: SessionReference
-  subscriptions: (() => void)[]
+  taskId:string; epoch:number; session:SessionFace; reference:SessionReference
+  subscriptions:(()=>void)[]
 }
-
-/** Serializes edits, guarantees one dispatch slot, never equates a chat response with Goal completion. */
+const err=(e:unknown)=>e instanceof Error?e.message:String(e)
 export class Coordinator {
-  private chain: Promise<void> = Promise.resolve()
-  private live: Active | undefined
-  private checking = false
-  private repump = false
-  private evaluating = false
-  private observeAgain = false
-  private closed = false
-  private booted = false
-  /** Never persisted: must be granted by a click in this exact Client generation. */
-  private armed = false
-  /** A newer Start/Pause click supersedes any unsettled earlier write. */
-  private controlIntent = 0
-  private epoch = 0
-  private readonly disposers: Array<() => void> = []
-
-  private readonly sessions: ISessions
-  private readonly workspaces: IWorkspaces
-  private readonly settings: QueueSettingsSource
-  private readonly connected: () => boolean
-  private readonly openSession?: (id: SessionId) => void
-  constructor(sessions: ISessions, workspaces: IWorkspaces, settings: QueueSettingsSource, connected: () => boolean, openSession?: (id: SessionId) => void) {
-    this.sessions = sessions
-    this.workspaces = workspaces
-    this.settings = settings
-    this.connected = connected
-    this.openSession = openSession
-  }
-
-  start(): void {
-    this.disposers.push(this.settings.subscribe(() => {
+  private chain:Promise<void>=Promise.resolve()
+  private live=new Map<string,Active>()
+  private observing=new Set<string>()
+  private observeAgain=new Set<string>()
+  private checking=false
+  private repump=false
+  private closed=false
+  private booted=false
+  private armed=false
+  private controlIntent=0
+  private epoch=0
+  private readonly disposers:(()=>void)[]=[]
+  constructor(
+    private readonly sessions:ISessions,private readonly workspaces:IWorkspaces,
+    private readonly settings:QueueSettingsSource,private readonly connected:()=>boolean,
+    private readonly openSession?:(id:SessionId)=>void
+  ){}
+  start():void {
+    this.disposers.push(this.settings.subscribe(()=>{
       void this.pump()
-      // A projection may have settled while settings were refreshing.
-      if (this.live && this.settings.getSnapshot().status === 'ready') void this.observe()
+      if(this.settings.getSnapshot().status==='ready')
+        for(const id of this.live.keys())void this.observe(id)
+    }))
+    // Session titles are owned by DSH; never rename automatically or issue a synthetic prompt.
+    if(this.sessions.list)this.disposers.push(this.sessions.list.subscribe(()=>{
+      void this.syncTitles()
     }))
     void this.pump()
   }
-
-  /** Called for a lost or replaced Host generation: no silent session replay. */
-  async connectionReset(): Promise<void> {
-    if (this.closed) return
-    this.armed = false
-    this.controlIntent++
-    this.epoch++
-    this.release()
-    // The settings Remote has changed generations; do not write with an obsolete CAS revision.
-    // At the next successful Host snapshot, pump() will recover the persisted active task.
-    this.booted = false
-    void this.pump()
+  async connectionReset():Promise<void>{
+    if(this.closed)return
+    this.armed=false;this.controlIntent++;this.epoch++;this.releaseAll()
+    this.booted=false;void this.pump()
   }
-
-  dispose(): void {
-    this.closed = true
-    this.armed = false
-    this.controlIntent++
-    this.epoch++
-    this.release()
-    for (const dispose of this.disposers.splice(0)) dispose()
+  dispose():void{
+    this.closed=true;this.armed=false;this.controlIntent++;this.epoch++
+    this.releaseAll();for(const stop of this.disposers.splice(0))stop()
   }
-
-  private queue(): QueueState {
-    const snapshot = this.settings.getSnapshot()
-    if (snapshot.status !== 'ready') throw new Error(snapshot.error ?? 'Host 队列配置未加载；拒绝使用默认空队列')
-    const decoded = decode(snapshot.value)
-    if (!decoded) throw new Error('队列配置无效；拒绝使用默认空队列')
+  private queue():QueueState {
+    const snapshot=this.settings.getSnapshot()
+    if(snapshot.status!=='ready')throw Error(snapshot.error??'Host 配置未加载')
+    const decoded=decode(snapshot.value)
+    if(!decoded)throw Error('Host 队列格式无效，不能继续调度')
     return decoded.queue
   }
-
-  /** Local quarantine is independent of the Host write result. */
-  private quarantine(reason: string): void {
-    this.armed = false
-    this.controlIntent++
-    this.booted = false
+  private write(fn:(q:QueueState)=>QueueState):Promise<void>{
+    const op=this.chain.catch(()=>{}).then(async()=>{
+      if(this.closed)return
+      const prev=this.queue(),updated=fn(prev)
+      if(updated!==prev)await this.settings.set('queue',updated)
+    })
+    this.chain=op.catch(()=>{})
+    return op
+  }
+  private quarantine(reason:string):void{
+    this.armed=false;this.controlIntent++;this.booted=false
     this.settings.failClosed(reason)
-    this.release()
+    this.releaseAll()
   }
-
-  /** Atomic settings-section commit; no intermediate activeId/tasks mismatch. */
-  private write(fn: (q: QueueState) => QueueState): Promise<void> {
-    const operation = this.chain.catch(() => {}).then(async () => {
-      if (this.closed) return
-      const previous = this.queue()
-      const updated = fn(previous)
-      if (updated !== previous) await this.settings.set('queue', updated)
+  add(input:Pick<Task,'title'|'workspaceId'|'prompt'|'goalMode'>):Promise<void>{
+    return this.write(q=>add(q,input,crypto.randomUUID()))
+  }
+  edit(id:string,input:Pick<Task,'title'|'workspaceId'|'prompt'|'goalMode'>):Promise<void>{
+    return this.write(q=>edit(q,id,input))
+  }
+  remove(id:string):Promise<void>{return this.write(q=>remove(q,id))}
+  move(id:string,offset:-1|1):Promise<void>{return this.write(q=>move(q,id,offset))}
+  retry(id:string):Promise<void>{return this.write(q=>retry(q,id))}
+  skip(id:string):Promise<void>{return this.write(q=>skip(q,id))}
+  setConcurrency(limit:number):Promise<void>{return this.write(q=>setConcurrency(q,limit))}
+  open(id:string):void{
+    const sessionId=this.queue().tasks.find(t=>t.id===id)?.sessionId
+    if(sessionId)this.openSession?.(sessionId as SessionId)
+  }
+  async enable(enabled:boolean):Promise<void>{
+    const intent=++this.controlIntent
+    if(!enabled)this.armed=false
+    const generation=this.epoch
+    await this.write(q=>{
+      if(intent!==this.controlIntent)return q
+      if(!this.booted||!this.connected()||generation!==this.epoch)throw Error('连接或恢复未就绪')
+      if(enabled&&q.tasks.some(t=>UNRESOLVED.includes(t.status)))
+        throw Error('存在未确认的历史任务，请先检查原 Session 并处置')
+      return {...q,enabled,error:enabled?'':q.error}
     })
-    this.chain = operation.catch(() => {})
-    return operation
-  }
-
-  add(input: Pick<Task,'title'|'workspaceId'|'prompt'|'goalMode'>): Promise<void> {
-    return this.write(q => add(q, input, crypto.randomUUID()))
-  }
-  edit(id: string, input: Pick<Task,'title'|'workspaceId'|'prompt'|'goalMode'>): Promise<void> {
-    return this.write(q => edit(q, id, input))
-  }
-  remove(id: string): Promise<void> { return this.write(q => remove(q, id)) }
-  move(id: string, offset: -1|1): Promise<void> { return this.write(q => move(q, id, offset)) }
-  retry(id: string): Promise<void> { return this.write(q => retry(q, id)) }
-  skip(id: string): Promise<void> { return this.write(q => skip(q, id)) }
-  async enable(enabled: boolean): Promise<void> {
-    const intent = ++this.controlIntent
-    if (!enabled) this.armed = false
-    const generation = this.epoch
-    await this.write(q => {
-      if (intent !== this.controlIntent) return q
-      if (!this.booted || !this.connected() || generation !== this.epoch) {
-        throw new Error('连接或恢复尚未就绪；不能启用队列')
-      }
-      if (enabled && q.tasks.some(t => UNRESOLVED.includes(t.status))) {
-        throw new Error('存在未处置的异常任务；先检查旧 Session，然后逐项重新排队或手工跳过')
-      }
-      return { ...q, enabled, error: enabled ? '' : q.error }
-    })
-    if (enabled && intent === this.controlIntent) {
-      if (this.closed || generation !== this.epoch || !this.connected() || !this.booted) {
-        throw new Error('连接状态已变化；队列必须重新手工启用')
-      }
-      this.armed = true
-      void this.pump()
+    if(enabled&&intent===this.controlIntent){
+      if(this.closed||generation!==this.epoch||!this.connected()||!this.booted)
+        throw Error('连接已切换；请重新手工启用')
+      this.armed=true;void this.pump()
     }
   }
-  open(id: string): void {
-    const t = this.queue().tasks.find(t => t.id === id)
-    if (t?.sessionId) this.openSession?.(t.sessionId as SessionId)
-  }
-
-  private async pump(): Promise<void> {
-    if (this.closed) return
-    if (this.checking) { this.repump = true; return }
-    this.checking = true
-    try {
-      if (this.settings.getSnapshot().status !== 'ready') return
-      if (!this.booted) {
-        // Each process/connection generation starts DISARMED. The saved enabled flag
-        // is historical state, never permission to submit more model work.
-        this.armed = false
-        await this.write(q => recover(q, '程序启动或连接重置；需检查旧 Session 并手工启动队列'))
-        this.booted = true
+  private async pump():Promise<void>{
+    if(this.closed)return
+    if(this.checking){this.repump=true;return}
+    this.checking=true
+    try{
+      if(this.settings.getSnapshot().status!=='ready')return
+      if(!this.booted){
+        this.armed=false
+        await this.write(q=>recover(q,'程序启动或连接切换；检查旧 Session 后手工激活队列'))
+        this.booted=true
         return
       }
-      if (!this.armed || this.live || !this.connected()) return
-      const task = next(this.queue())
-      if (!task) return
-      const generation = this.epoch
-      await this.write(q => claim(q, task.id))
-      // An interrupted claim must not launch a Session even if the Host committed it.
-      if (generation !== this.epoch || this.closed || !this.armed || !this.connected()) return
-      await this.dispatch(task)
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error)
-      console.error('[dsh-goal-queue] unsafe dispatch state; queue quarantined', error)
-      this.quarantine(`调度状态不可确认，已禁止继续执行：${reason}。请检查旧 Session 并手工重载。`)
-    } finally {
-      this.checking = false
-      if (this.repump) { this.repump = false; queueMicrotask(() => { void this.pump() }) }
+      if(!this.armed||!this.connected())return
+      // Sequentially reserve each available slot before submitting external work.
+      while(this.armed&&!this.closed&&this.connected()){
+        const task=next(this.queue())
+        if(!task)break
+        const generation=this.epoch
+        await this.write(q=>claim(q,task.id))
+        if(generation!==this.epoch||this.closed||!this.armed||!this.connected())break
+        await this.dispatch(task)
+      }
+    }catch(e){
+      console.error('[goal-queue] unsafe dispatch',e)
+      this.quarantine('调度状态不确定，已停止派发：'+err(e))
+    }finally{
+      this.checking=false
+      if(this.repump){this.repump=false;queueMicrotask(()=>{void this.pump()})}
     }
   }
-
-  private async dispatch(task: Task): Promise<void> {
-    const generation = this.epoch
-    let created = false
-    let submitted = false
-    try {
-      const workspace = this.workspaces.list.getSnapshot().items.find(w => w.workspaceId === task.workspaceId)
-      if (!workspace) throw new Error('任务工作区已删除；停止队列')
-      // A new Session avoids contaminating a prior project's conversation or goal.
-      const sessionId = await this.sessions.create({ workspaceId: workspace.workspaceId })
-      created = true
-      if (generation !== this.epoch || this.closed) return
-      await this.write(q => updateActive(q, task.id, { sessionId }))
-      const reference = this.sessions.retain(sessionId, { source: 'goalQueue' })
-      try { await reference.ready } catch (error) { reference.release(); throw error }
-      if (generation !== this.epoch || this.closed) { reference.release(); return }
-      const session = reference.binding.session
-      const active: Active = { taskId: task.id, epoch: generation, session, reference, subscriptions: [] }
-      this.live = active
-      active.subscriptions.push(session.subscribe(() => { void this.observe() }))
-      active.subscriptions.push(session.projections.faceOf('goal').subscribe(() => { void this.observe() }))
-      // /goal must pass through the command plane: a normal model prompt is NOT a goal.
-      if (task.goalMode) {
-        const text = task.prompt.replace(/\s+/g, ' ').trim()
-        submitted = true
-        const result = await session.command(`/goal ${text}`)
-        if (!result.ok) throw new Error(result.error.message)
-        if (!result.value.matched) throw new Error('未安装 DSH 原生 /goal 命令；目标模式无法启动')
-      } else {
-        submitted = true
-        const result = await session.prompt([{ type: 'text', text: task.prompt }], 'queue')
-        if (!result.ok) throw new Error(result.error.message)
+  private async hold(id:string,sessionId:SessionId):Promise<Active>{
+    const reference=this.sessions.retain(sessionId,{source:'goalQueue'})
+    try{await reference.ready}catch(e){reference.release();throw e}
+    if(this.closed){reference.release();throw Error('插件已关闭')}
+    const session=reference.binding.session
+    const held:Active={taskId:id,epoch:this.epoch,session,reference,subscriptions:[]}
+    this.live.set(id,held)
+    held.subscriptions.push(session.subscribe(()=>{void this.observe(id)}))
+    held.subscriptions.push(session.projections.faceOf('goal').subscribe(()=>{void this.observe(id)}))
+    return held
+  }
+  private async dispatch(task:Task):Promise<void>{
+    const generation=this.epoch
+    let created=false,submitted=false
+    try{
+      const workspace=this.workspaces.list.getSnapshot().items.find(w=>w.workspaceId===task.workspaceId)
+      if(!workspace)throw Error('工作区已删除')
+      const sessionId=await this.sessions.create({workspaceId:workspace.workspaceId})
+      created=true
+      if(generation!==this.epoch||this.closed)return
+      await this.write(q=>setSessionId(q,task.id,sessionId))
+      const held=await this.hold(task.id,sessionId)
+      if(generation!==this.epoch||this.closed){this.release(task.id);return}
+      if(task.goalMode){
+        submitted=true
+        const response=await held.session.command('/goal '+task.prompt.replace(/\s+/g,' ').trim())
+        if(!response.ok)throw Error(response.error.message)
+        if(!response.value.matched)throw Error('原生 /goal 命令不可用')
+      }else{
+        submitted=true
+        const response=await held.session.prompt([{type:'text',text:task.prompt}],'queue')
+        if(!response.ok)throw Error(response.error.message)
       }
-      if (generation !== this.epoch || this.closed) return
-      await this.write(q => updateActive(q, task.id, { status: 'running' }))
-      await this.observe()
-    } catch (error) {
-      // A successful/ambiguous Host admission can continue even after a Client error.
-      // Never silently retry or dispatch a second task after such a failure.
-      this.armed = false
-      if (generation === this.epoch && !this.closed) {
-        const detail = error instanceof Error ? error.message : String(error)
-        try {
-          await this.fail(task.id, created ? 'interrupted' : 'failed',
-            `${detail}；${created ? (submitted ? '命令可能已提交' : 'Session 已创建') : 'Session 创建未确认'}，请人工核实旧 Session`)
-        } catch (persistError) {
-          console.error('[dsh-goal-queue] cannot persist failure', persistError)
-          this.quarantine(`无法保存任务失败状态（${detail}）；旧 Session 可能仍在执行。请手工检查和重载。`)
-        }
+      if(generation!==this.epoch||this.closed)return
+      await this.write(q=>updateActive(q,task.id,{status:'running'}))
+      await this.observe(task.id)
+    }catch(e){
+      this.armed=false
+      if(generation===this.epoch&&!this.closed){
+        try{await this.fail(task.id,created?'interrupted':'failed',
+          err(e)+'；'+(created?(submitted?'命令可能已提交':'Session 已创建'):'Session 创建未确认')+'，请手工核实')}
+        catch(p){this.quarantine('任务失败状态保存失败：'+err(p))}
       }
     }
   }
-
-  private release(): void {
-    const live = this.live
-    this.live = undefined
-    if (!live) return
-    for (const stop of live.subscriptions.splice(0)) stop()
-    live.reference.release()
+  private release(id:string):void{
+    const held=this.live.get(id);if(!held)return
+    this.live.delete(id);for(const stop of held.subscriptions.splice(0))stop()
+    held.reference.release()
   }
-
-  private async fail(id: string, status: 'failed'|'blocked'|'interrupted', detail: string): Promise<void> {
-    this.armed = false
-    await this.write(q => q.activeId === id ? updateActive(q, id, { status, detail }) : q)
-    if (this.live?.taskId === id) this.release()
+  private releaseAll():void{for(const id of [...this.live.keys()])this.release(id)}
+  private async fail(id:string,status:'failed'|'blocked'|'interrupted',detail:string):Promise<void>{
+    this.armed=false
+    await this.write(q=>q.activeIds.includes(id)?updateActive(q,id,{status,detail}):q)
+    this.release(id)
   }
-
-  private async observe(): Promise<void> {
-    if (this.closed || this.settings.getSnapshot().status !== 'ready') return
-    if (this.evaluating) { this.observeAgain = true; return }
-    this.evaluating = true
-    try {
-      const active = this.live
-      if (!active || active.epoch !== this.epoch) return
-      const finished = await observeTask(active.session, {
-        current: () => this.queue().tasks.find(t => t.id === active.taskId),
-        update: async patch => { await this.write(q => updateActive(q, active.taskId, patch)) },
-        fail: async (status, detail) => { await this.fail(active.taskId, status, detail) },
+  private async observe(id:string):Promise<void>{
+    if(this.closed||this.settings.getSnapshot().status!=='ready')return
+    if(this.observing.has(id)){this.observeAgain.add(id);return}
+    this.observing.add(id)
+    try{
+      const held=this.live.get(id)
+      if(!held||held.epoch!==this.epoch)return
+      const finished=await observeTask(held.session,{
+        current:()=>this.queue().tasks.find(t=>t.id===id),
+        update:async patch=>{await this.write(q=>updateActive(q,id,patch))},
+        fail:async(status,detail)=>{await this.fail(id,status,detail)}
       })
-      if (!finished || this.live !== active || active.epoch !== this.epoch) return
-      this.release()
-      // The settings subscription may have fired while `live` was still retained.
-      void this.pump()
-    } catch (error) {
-      console.error('[dsh-goal-queue] observe failed', error)
-      const id = this.live?.taskId
-      this.armed = false
-      if (id) {
-        try {
-          await this.fail(id, 'interrupted', error instanceof Error ? error.message : String(error))
-        } catch (persistError) {
-          console.error('[dsh-goal-queue] failed to persist observed error', persistError)
-          this.quarantine('执行状态写入失败，旧 Session 可能仍在运行；请人工检查并重载配置')
-        }
+      if(finished&&this.live.get(id)===held){
+        this.release(id);void this.pump()
       }
-    } finally {
-      this.evaluating = false
-      if (this.observeAgain) { this.observeAgain = false; queueMicrotask(() => { void this.observe() }) }
+    }catch(e){
+      this.armed=false
+      if(this.live.has(id)){
+        try{await this.fail(id,'interrupted',err(e))}
+        catch(p){this.quarantine('Session 状态写入失败：'+err(p))}
+      }
+    }finally{
+      this.observing.delete(id)
+      if(this.observeAgain.delete(id))queueMicrotask(()=>{void this.observe(id)})
     }
+  }
+  /** Discover at UI open. A discovery only observes; it never submits a model command. */
+  async discover():Promise<number>{
+    if(!this.connected()||!this.booted||this.settings.getSnapshot().status!=='ready')
+      throw Error('Host 尚未就绪')
+    await this.sessions.refresh()
+    const snapshot=this.sessions.list.getSnapshot()
+    if(snapshot.phase!=='ready')throw Error('DSH Session 列表尚未读取完成，拒绝以空列表代替')
+    let found=0
+    for(const id of snapshot.ids){
+      if(this.closed||!this.connected())break
+      const row=snapshot.byId[id]
+      if(!row||!row.running||row.origin==='subagent')continue
+      const old=this.queue().tasks.find(t=>t.sessionId===id)
+      if(old&&!['interrupted','running','starting'].includes(old.status))continue
+      if(old&&this.live.has(old.id))continue
+      const workspaces=this.workspaces.list.getSnapshot().items
+      const workspace=workspaces.find(w=>w.sessionIds.includes(id))
+        ??workspaces.find(w=>w.path===row.cwd)
+      // Read goal projection from the exact existing Session; never infer from a title.
+      const reference=this.sessions.retain(id,{source:'goalQueue'})
+      let projection:{goal?:{id:string;objective:string;phase:string}}|undefined
+      try{
+        await reference.ready
+        const raw=reference.binding.session.projections.faceOf('goal').getSnapshot()
+        if(raw&&typeof raw==='object')projection=raw as typeof projection
+      }finally{reference.release()}
+      const goal=projection?.goal
+      const taskId=old?.id??crypto.randomUUID()
+      await this.write(q=>adopt(q,{
+        sessionId:id,workspaceId:workspace?.workspaceId??'',title:row.title??'',
+        goalMode:old?.goalMode??Boolean(goal),goalId:goal?.id,prompt:old?.prompt??goal?.objective??''
+      },taskId))
+      if(!this.live.has(taskId)){
+        try{await this.hold(taskId,id)}catch(e){
+          await this.fail(taskId,'interrupted','无法重新连接旧 Session：'+err(e));continue
+        }
+        void this.observe(taskId)
+      }
+      found++
+    }
+    await this.syncTitles()
+    return found
+  }
+  private async syncTitles():Promise<void>{
+    if(this.closed||!this.sessions.list||this.settings.getSnapshot().status!=='ready')return
+    const rows=this.sessions.list.getSnapshot().byId
+    const updates=this.queue().tasks.filter(t=>!t.title&&t.sessionId&&rows[t.sessionId]?.title)
+    if(!updates.length)return
+    try{
+      await this.write(q=>{
+        let out=q
+        for(const task of updates){
+          const title=task.sessionId?rows[task.sessionId]?.title:undefined
+          if(title&&out.tasks.find(t=>t.id===task.id&&!t.title))out=updateTitle(out,task.id,title)
+        }
+        return out
+      })
+    }catch(e){console.warn('[goal-queue] title sync failed',e)}
+  }
+  /** Explicit user action; resumes only an existing Goal in its original Session. */
+  async resumeGoal(id:string):Promise<void>{
+    const task=this.queue().tasks.find(t=>t.id===id)
+    if(!task||task.status!=='interrupted'||!task.goalMode||!task.sessionId)
+      throw Error('只有已中断且保留原 Session 的 Goal 可以激活')
+    if(this.queue().activeIds.length>=this.queue().maxConcurrent)
+      throw Error('当前并发名额已满')
+    const ref=this.sessions.retain(task.sessionId as SessionId,{source:'goalQueue'})
+    try{
+      await ref.ready
+      const raw=ref.binding.session.projections.faceOf('goal').getSnapshot()
+      const goal=raw&&typeof raw==='object'&&'goal' in raw
+        ?(raw as {goal?:{id:string;phase:string}}).goal:undefined
+      if(!goal||!['active','paused','blocked'].includes(goal.phase))
+        throw Error('原 Session 中没有可恢复的 Goal')
+      if(ref.binding.session.getSnapshot().running)
+        throw Error('原 Session 正在运行，请使用“刷新运行任务”重新关联，不要重复恢复')
+      // Persist ownership before command; an uncertain command response prevents second dispatch.
+      await this.write(q=>adopt(q,{
+        sessionId:task.sessionId!,workspaceId:task.workspaceId,title:task.title,
+        goalMode:true,goalId:goal.id,prompt:task.prompt
+      },task.id))
+      await this.hold(id,task.sessionId as SessionId)
+      const response=await ref.binding.session.command('/goal resume')
+      if(!response.ok||!response.value.matched)throw Error('Goal 恢复命令未被接受')
+      void this.observe(id)
+    }catch(e){
+      try{await this.fail(id,'interrupted','恢复状态不确定：'+err(e))}
+      catch(p){this.quarantine('无法保存 Goal 恢复异常：'+err(p))}
+      throw e
+    }finally{ref.release()}
   }
 }
