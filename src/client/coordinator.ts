@@ -1,7 +1,7 @@
 /** Single-renderer orchestration of persisted queue items via supported DSH Client APIs. */
-import type { ISessions, SessionFace } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { ISessions, SessionFace, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { IWorkspaces } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { QueueSettingsSource } from './settings.ts'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { EMPTY_QUEUE, add, claim, decode, edit, move, next, recover, remove, retry, updateActive,
   type QueueSettings, type QueueState, type Task } from '../queue.ts'
@@ -14,6 +14,7 @@ interface Active {
   taskId: string
   epoch: number
   session: SessionFace
+  reference: SessionReference
   subscriptions: (() => void)[]
 }
 interface Projection { goal: { id: string; objective: string; phase: string }; roundsStarted: number }
@@ -33,13 +34,15 @@ export class Coordinator {
 
   private readonly sessions: ISessions
   private readonly workspaces: IWorkspaces
-  private readonly settings: SettingsScope<QueueSettings>
+  private readonly settings: QueueSettingsSource
   private readonly connected: () => boolean
-  constructor(sessions: ISessions, workspaces: IWorkspaces, settings: SettingsScope<QueueSettings>, connected: () => boolean) {
+  private readonly openSession?: (id: SessionId) => void
+  constructor(sessions: ISessions, workspaces: IWorkspaces, settings: QueueSettingsSource, connected: () => boolean, openSession?: (id: SessionId) => void) {
     this.sessions = sessions
     this.workspaces = workspaces
     this.settings = settings
     this.connected = connected
+    this.openSession = openSession
   }
 
   start(): void {
@@ -52,7 +55,10 @@ export class Coordinator {
     if (this.closed || !this.booted) return
     this.epoch++
     this.release()
-    await this.write(q => recover(q, 'DSH 连接已重置；请检查旧 Session，确认后手动重排'))
+    // The settings Remote has changed generations; do not write with an obsolete CAS revision.
+    // At the next successful Host snapshot, pump() will recover the persisted active task.
+    this.booted = false
+    void this.pump()
   }
 
   dispose(): void {
@@ -93,7 +99,7 @@ export class Coordinator {
   }
   open(id: string): void {
     const t = this.queue().tasks.find(t => t.id === id)
-    if (t?.sessionId) this.sessions.open(t.sessionId as SessionId)
+    if (t?.sessionId) this.openSession?.(t.sessionId as SessionId)
   }
 
   private async pump(): Promise<void> {
@@ -132,9 +138,11 @@ export class Coordinator {
       const sessionId = await this.sessions.create({ workspaceId: workspace.workspaceId })
       if (generation !== this.epoch || this.closed) return
       await this.write(q => updateActive(q, task.id, { sessionId }))
-      const session = this.sessions.binding(sessionId)?.session
-      if (!session) throw new Error('DSH 未创建可访问的 Session 绑定')
-      const active: Active = { taskId: task.id, epoch: generation, session, subscriptions: [] }
+      const reference = this.sessions.retain(sessionId, { source: 'goalQueue' })
+      try { await reference.ready } catch (error) { reference.release(); throw error }
+      if (generation !== this.epoch || this.closed) { reference.release(); return }
+      const session = reference.binding.session
+      const active: Active = { taskId: task.id, epoch: generation, session, reference, subscriptions: [] }
       this.live = active
       active.subscriptions.push(session.subscribe(() => { void this.observe() }))
       active.subscriptions.push(session.projections.faceOf('goal').subscribe(() => { void this.observe() }))
@@ -163,6 +171,7 @@ export class Coordinator {
     this.live = undefined
     if (!live) return
     for (const stop of live.subscriptions.splice(0)) stop()
+    live.reference.release()
   }
 
   private async fail(id: string, status: 'failed'|'blocked'|'interrupted', detail: string): Promise<void> {

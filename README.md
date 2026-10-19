@@ -1,6 +1,6 @@
 # DSH Goal Queue — DeepSeek Harness 桌面版跨工作区串行任务插件
 
-> 状态：**v0.1.0 源码预览版**。核心调度逻辑及模拟 Session/Goal 集成测试通过，**尚未在真实 DSH Desktop 应用中安装、构建或验收**。请勿将此版本当作已经过生产验证的软件。
+> 状态：**v0.2.0 源码预览版**。核心调度逻辑及模拟 Session/Goal 集成测试通过，**尚未在真实 DSH Desktop 应用中安装、构建或验收**。请勿将此版本当作已经过生产验证的软件。
 
 ## 功能
 
@@ -14,7 +14,7 @@
 - 重启/断连时对尚未确认的执行进行保守暂停，避免悄悄在另一个 Session 重做。
 - 人工暂停**仅停止派发下一项**，不会自动取消当前正在运行的 Session。
 
-**构建兼容基线：** 当前版本针对 DSH `0.1.2-alpha.5` 的客户端插件接口。DSH `0.1.7+`、`0.2.x` 已改变 Settings 与 Session API，尚未完成适配；不要将此预览版视作兼容最新 Desktop 的正式插件。
+**构建兼容基线：** 当前版本针对 DSH `0.2.1-rc.2` 的客户端插件接口。DSH `0.1.7+`、`0.2.x` 已改变 Settings 与 Session API，尚未完成适配；不要将此预览版视作兼容最新 Desktop 的正式插件。
 
 ## 已知限制
 
@@ -96,3 +96,7 @@ npm run build
 ## 许可
 
 MIT。插件代码独立编写，没有复制第三方看板源代码。
+
+## Targeted Desktop build
+
+This branch targets the **official DSH `dsh-v0.2.1-rc.2` tag**. The Client now uses a retained Session reference, `uiWorkspace.openSession()`, and Host config volatile fields updated through the revision-fenced `remote.settings` methods. Local mock tests and GitHub Actions builds are not a substitute for the Windows Desktop end-to-end acceptance tests.

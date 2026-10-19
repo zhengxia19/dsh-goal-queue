@@ -3,7 +3,7 @@ import z from '@deepseek-ai/schemastery'
 import type { QueueSettings } from './queue.ts'
 import { STATES } from './queue.ts'
 export const queueSchema: z<QueueSettings> = z.object({
-  version: z.const(1).default(1),
+  version: z.const(1).default(1).volatile(),
   queue: z.object({
     enabled: z.boolean().default(false),
     activeId: z.union([z.string(), z.const(null)]).default(null),
@@ -15,5 +15,5 @@ export const queueSchema: z<QueueSettings> = z.object({
       seenRunning: z.union([z.boolean(), z.const(undefined)]), detail: z.union([z.string(), z.const(undefined)]),
       createdAt: z.number(), updatedAt: z.number(),
     })).default([]),
-  }).default({ enabled: false, activeId: null, error: '', tasks: [] }),
+  }).default({ enabled: false, activeId: null, error: '', tasks: [] }).volatile(),
 })

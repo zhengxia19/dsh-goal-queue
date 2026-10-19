@@ -1,6 +1,6 @@
 # DSH Goal Queue — DeepSeek Harness 桌面版跨工作区串行任务插件
 
-> 状态：**v0.1.0 源码预览版**。核心调度逻辑及模拟 Session/Goal 集成测试通过，**尚未在真实 DSH Desktop 应用中安装、构建或验收**。请勿将此版本当作已经过生产验证的软件。
+> 状态：**v0.2.0（适配 DSH Desktop v0.2.1-rc.2）源码预览版**。核心调度逻辑及模拟 Session/Goal 集成测试通过，**尚未在用户的真实 DPH/DSH Desktop 应用中安装并完成端到端验收**。请勿将此版本当作已经过生产验证的软件。
 
 ## 功能
 
@@ -10,13 +10,13 @@
 - 队列最大并发数固定为 **1**；每项任务创建一个独立 Session，工作目录由 Workspace 决定。
 - Goal 任务只有在当前 Goal 的持久投影明确为 `complete` **且 Session 已空闲**后才进入下一项；`paused/blocked` 或错误均暂停队列。
 - 普通任务必须见证本 Session 的 `running → idle`，才视为一次任务执行完成。这不是外部测试验收，不能保证代码功能正确。
-- 任务、次序、状态存储在 DSH 的 Host 端 settings 命名空间（`goal-queue`），不保存第二份 Goal 状态。
+- 任务、次序、状态通过 DSH v0.2.1-rc.2 的 `settings.describe` / `settings.mutate` 更新 Cordis `goal-queue` 插件配置（volatile 字段），不保存第二份 Goal 状态。
 - 重启/断连时对尚未确认的执行进行保守暂停，避免悄悄在另一个 Session 重做。
 - 人工暂停**仅停止派发下一项**，不会自动取消当前正在运行的 Session。
 
-**兼容基线：** 当前插件以 DSH `0.1.2-alpha.5` 同代客户端插件接口为构建目标。DSH `0.1.7+` 和 `0.2.x` 的 Settings/Session API 存在不兼容变更，本版本尚未适配，不能直接当作最新 Desktop 兼容插件使用。
 
-**构建兼容基线：** 当前版本针对 DSH `0.1.2-alpha.5` 的客户端插件接口。DSH `0.1.7+`、`0.2.x` 已改变 Settings 与 Session API，尚未完成适配；不要将此预览版视作兼容最新 Desktop 的正式插件。
+
+**目标版本：`dsh-v0.2.1-rc.2`，对应 DPH/DSH Desktop `V0.2.1-rc.2`。** 依赖固定为该版本，不能直接安装在旧版 `0.1.x`。新增支持 DSH 新版 `sessions.retain()/ready`、`uiWorkspace.openSession()`、Cordis `Config.volatile()` 与 `remote.settings` CAS 写入。此处的“适配”表示代码已针对该版本 API 修改、通过仓库构建及测试，不代表用户 Windows 客户端已实测。
 
 ## 已知限制
 
@@ -66,7 +66,7 @@ dsh plugin --profile desktop add "D:\Source\dsh-goal-queue"
 
 `pending → starting → running → completed` 是正常路径；异常状态包括 `blocked / failed / interrupted`。`completed` 的含义是检测到 DSH 的执行完成信号，**不等于人工验收通过**。
 
-持久化存储用 `goal-queue` settings 分区的单个 `queue` 字段，包含 `enabled`、`activeId`、按顺序排列的 tasks、错误文本。`activeId` 与任务状态一起提交，尽可能保持写入一致性。
+持久化存储使用 Cordis 插件 `goal-queue` 的 profile 配置中 `queue` 字段，包含 `enabled`、`activeId`、按顺序排列的 tasks、错误文本。`activeId` 与任务状态一起提交，尽可能保持写入一致性。
 
 ## 验证
 
@@ -80,10 +80,11 @@ npm run build
 
 ## 目录结构
 
-- `src/index.ts`：原生 Host 插件设置注册。
+- `src/index.ts`：原生 Host 插件 Config schema（volatile）和 UI 配置策略。
 - `src/client/index.ts`：DSH Client 槽位贡献。
 - `src/client/QueueBoard.tsx`：队列管理界面。
 - `src/client/coordinator.ts`：串行调度与状态观察。
+- `src/client/settings.ts`：新版 Host 配置读写和版本 CAS 校验。
 - `src/queue.ts`：可独立测试的持久化队列领域逻辑。
 - `test/`：领域与模拟执行测试。
 

@@ -30,7 +30,7 @@ function system(settings:MockSettings){
   const sessions={
     async create(){faces.push(new MockFace());return `session-${faces.length}`},
     binding(id:string){return {session:faces[Number(id.slice(8))-1]}},
-    open(_id:string){},
+    retain(id:string){const face=faces[Number(id.slice(8))-1];return {binding:{session:face},ready:Promise.resolve({session:face}),release(){}}},
   }
   const workspaces={list:{getSnapshot:()=>({items:[{workspaceId:'ws',title:'ws',path:'/tmp/ws'}]})}}
   const coordinator=new Coordinator(sessions as never, workspaces as never, settings as never, ()=>true)
@@ -81,5 +81,16 @@ test('an ordinary task is not lost after prompt acceptance and idle',async()=>{
   assert.equal(faces.length,1)
   faces[0]!.state.running=false;faces[0]!.emit();await pause()
   assert.equal(settings.value.queue.tasks[0]?.status,'completed')
+  coordinator.dispose()
+})
+test('connection reset drops held session and marks old active goal interrupted after settings load',async()=>{
+  const initial=add(EMPTY_QUEUE,item('A'),'a')
+  const q={...initial,enabled:true,activeId:'a',tasks:[{...initial.tasks[0]!,status:'running' as const,sessionId:'old'}]}
+  const settings=new MockSettings(q),{coordinator,faces}=system(settings)
+  coordinator.start();await pause()
+  await coordinator.connectionReset();await pause()
+  assert.equal(settings.value.queue.enabled,false)
+  assert.equal(settings.value.queue.tasks[0]?.status,'interrupted')
+  assert.equal(faces.length,0)
   coordinator.dispose()
 })

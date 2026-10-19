@@ -2,7 +2,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { PropsStore, PropsHooks, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { QueueSettingsSource } from './settings.ts'
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { DEFAULT_SETTINGS, type QueueSettings, type Task } from '../queue.ts'
 import type { viewStore } from './store.ts'
@@ -10,7 +10,7 @@ import type { Coordinator } from './coordinator.ts'
 
 type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'enable' | 'open'>
 export type BoardProps = PropsStore<typeof viewStore> & PropsRuntime<'shell.overlay'> &
-  PropsHooks<{queueSettings: SettingsScope<QueueSettings>, workspaces: {
+  PropsHooks<{queueSettings: QueueSettingsSource, workspaces: {
     getSnapshot():WorkspaceSnapshot;subscribe(listener:()=>void):()=>void
   }}> & {operations:Ops}
 const labels: Record<Task['status'], string> = {
