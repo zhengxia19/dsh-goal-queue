@@ -14,6 +14,8 @@
 - 重启/断连时对尚未确认的执行进行保守暂停，避免悄悄在另一个 Session 重做。
 - 人工暂停**仅停止派发下一项**，不会自动取消当前正在运行的 Session。
 
+**构建兼容基线：** 当前版本针对 DSH `0.1.2-alpha.5` 的客户端插件接口。DSH `0.1.7+`、`0.2.x` 已改变 Settings 与 Session API，尚未完成适配；不要将此预览版视作兼容最新 Desktop 的正式插件。
+
 ## 已知限制
 
 1. 当前仅调度**通过插件新增**的任务；不接管用户手工在其他窗口运行的 `/goal`，也无法阻止不属于本队列的 Session 并行运行。
@@ -33,7 +35,7 @@
 # 在有 GitHub 仓库后，Windows PowerShell 中运行
 # git clone https://github.com/zhengxia19/dsh-goal-queue.git
 # cd dsh-goal-queue
-npm install
+npm install --legacy-peer-deps
 npm test
 npm run typecheck
 npm run build

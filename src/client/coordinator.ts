@@ -1,5 +1,5 @@
 /** Single-renderer orchestration of persisted queue items via supported DSH Client APIs. */
-import type { ISessions, SessionReference, SessionFace } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { ISessions, SessionFace } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { IWorkspaces } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -13,7 +13,6 @@ declare module '@deepseek-ai/dsh-api-session-controller/client' {
 interface Active {
   taskId: string
   epoch: number
-  reference: SessionReference
   session: SessionFace
   subscriptions: (() => void)[]
 }
@@ -126,8 +125,6 @@ export class Coordinator {
 
   private async dispatch(task: Task): Promise<void> {
     const generation = this.epoch
-    let reference: SessionReference | undefined
-    let ownershipTransferred = false
     try {
       const workspace = this.workspaces.list.getSnapshot().items.find(w => w.workspaceId === task.workspaceId)
       if (!workspace) throw new Error('任务工作区已删除；停止队列')
@@ -135,13 +132,10 @@ export class Coordinator {
       const sessionId = await this.sessions.create({ workspaceId: workspace.workspaceId })
       if (generation !== this.epoch || this.closed) return
       await this.write(q => updateActive(q, task.id, { sessionId }))
-      reference = this.sessions.retain(sessionId, { source: 'goalQueue' })
-      await reference.ready
-      if (generation !== this.epoch || this.closed) return
-      const session = reference.binding.session
-      const active: Active = { taskId: task.id, epoch: generation, reference, session, subscriptions: [] }
+      const session = this.sessions.binding(sessionId)?.session
+      if (!session) throw new Error('DSH 未创建可访问的 Session 绑定')
+      const active: Active = { taskId: task.id, epoch: generation, session, subscriptions: [] }
       this.live = active
-      ownershipTransferred = true
       active.subscriptions.push(session.subscribe(() => { void this.observe() }))
       active.subscriptions.push(session.projections.faceOf('goal').subscribe(() => { void this.observe() }))
       // /goal must pass through the command plane: a normal model prompt is NOT a goal.
@@ -161,8 +155,6 @@ export class Coordinator {
       if (generation === this.epoch && !this.closed) {
         await this.fail(task.id, 'failed', error instanceof Error ? error.message : String(error))
       }
-    } finally {
-      if (!ownershipTransferred && reference) reference.release()
     }
   }
 
@@ -171,7 +163,6 @@ export class Coordinator {
     this.live = undefined
     if (!live) return
     for (const stop of live.subscriptions.splice(0)) stop()
-    live.reference.release()
   }
 
   private async fail(id: string, status: 'failed'|'blocked'|'interrupted', detail: string): Promise<void> {

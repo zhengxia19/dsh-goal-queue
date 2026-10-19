@@ -29,7 +29,7 @@ function system(settings:MockSettings){
   const faces:MockFace[]=[]
   const sessions={
     async create(){faces.push(new MockFace());return `session-${faces.length}`},
-    retain(id:string){return {ready:Promise.resolve(),binding:{session:faces[Number(id.slice(8))-1]},release(){}}},
+    binding(id:string){return {session:faces[Number(id.slice(8))-1]}},
     open(_id:string){},
   }
   const workspaces={list:{getSnapshot:()=>({items:[{workspaceId:'ws',title:'ws',path:'/tmp/ws'}]})}}
