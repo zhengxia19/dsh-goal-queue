@@ -27,7 +27,7 @@ export class HostQueueSettings implements QueueSettingsSource {
   constructor(ctx: Context) { this.ctx = ctx }
 
   start(): void {
-    this.unsubscribers.push(this.ctx.remote.$on('settings/document-updated', (ns) => {
+    this.unsubscribers.push(this.ctx.remote.$on('settings/document-updated', (ns: string) => {
       if (ns === 'goal-queue') void this.refresh()
     }))
     this.unsubscribers.push(this.ctx.on('connection/reset', () => {
@@ -64,7 +64,7 @@ export class HostQueueSettings implements QueueSettingsSource {
       try {
         const response = await this.ctx.remote.settings.describe()
         if (!response.ok) throw new Error(response.error.message)
-        const view = response.value.namespaces.find(ns => ns.ns === 'goal-queue')
+        const view = response.value.namespaces.find((ns: { ns: string }) => ns.ns === 'goal-queue')
         if (!view) throw new Error('未找到 goal-queue 配置；请确认原生插件 Host 端已安装并启用')
         const value = decode(view.value)
         if (!value) throw new Error('持久队列格式无效；拒绝以空队列覆盖已有记录')
