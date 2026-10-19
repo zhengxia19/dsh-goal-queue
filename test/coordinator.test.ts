@@ -9,12 +9,14 @@ class MockFace {
   private goalListeners=new Set<()=>void>()
   state={running:false,awaitingFirstTurn:false,lastAgentError:null as string|null}
   goal: {goal:{id:string,objective:string,phase:string}} | null=null
+  calls:string[]=[]
+  rejectTitle=false
   projections={faceOf:(_key:string)=>({getSnapshot:()=>this.goal,subscribe:(fn:()=>void)=>{this.goalListeners.add(fn);return()=>{this.goalListeners.delete(fn)}}})}
   getSnapshot=()=>this.state
   subscribe=(fn:()=>void)=>{this.listeners.add(fn);return()=>{this.listeners.delete(fn)}}
   emit(){for(const fn of this.listeners)fn();for(const fn of this.goalListeners)fn()}
-  command=async(line:string)=>{this.goal={goal:{id:'goal-'+line,objective:line.slice(6),phase:'active'}};this.emit();return {ok:true,value:{matched:true}}}
-  prompt=async()=>{this.state.running=true;this.emit();return {ok:true,value:{accepted:true}}}
+  command=async(line:string)=>{this.calls.push(line);if(line.startsWith('/goal-queue-title '))return {ok:true,value:{matched:!this.rejectTitle}};this.goal={goal:{id:'goal-'+line,objective:line.slice(6),phase:'active'}};this.emit();return {ok:true,value:{matched:true}}}
+  prompt=async()=>{this.calls.push('prompt');this.state.running=true;this.emit();return {ok:true,value:{accepted:true}}}
   rename=async()=>({ok:true})
 }
 class MockSettings {
@@ -118,5 +120,27 @@ test('T04 command accepted but running-state commit lost blocks subsequent tasks
   assert.equal(faces.length,1)
   assert.equal(settings.value.queue.enabled,false)
   assert.equal(settings.value.queue.tasks[0]?.status,'interrupted')
+  coordinator.dispose()
+})
+
+test('AI title opt-in uses dedicated command before native Goal and does not add a task prompt',async()=>{
+  const q=add(EMPTY_QUEUE,{...item('goal'),title:'',generateTitle:true,titleMaxChars:16},'g')
+  const settings=new MockSettings(q),{faces,coordinator}=system(settings)
+  coordinator.start();await pause();await coordinator.enable(true);await pause()
+  assert.equal(faces.length,1)
+  assert.equal(faces[0]!.calls.length,2)
+  assert.equal(faces[0]!.calls[0]!.startsWith('/goal-queue-title '),true)
+  assert.deepEqual(JSON.parse(faces[0]!.calls[0]!.slice('/goal-queue-title '.length)),{
+    maxChars:16,prompt:'build goal'
+  })
+  assert.equal(faces[0]!.calls[1],'/goal build goal')
+  assert.equal(faces[0]!.calls.includes('prompt'),false)
+  coordinator.dispose()
+})
+test('AI title opt-out preserves ordinary submission, without title model request',async()=>{
+  const q=add(EMPTY_QUEUE,item('ordinary',false),'g')
+  const settings=new MockSettings(q),{faces,coordinator}=system(settings)
+  coordinator.start();await pause();await coordinator.enable(true);await pause()
+  assert.deepEqual(faces[0]!.calls,['prompt'])
   coordinator.dispose()
 })
