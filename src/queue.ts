@@ -5,8 +5,11 @@ export type TaskSource = 'queue'|'discovered'
 export interface Task {
   id: string; workspaceId: string; title: string; prompt: string; goalMode: boolean
   status: TaskStatus; source?: TaskSource; sessionId?: string; goalId?: string
+  /** Opt-in, model-generated, tool-free title. */
+  generateTitle?: boolean; titleMaxChars?: number
   seenRunning?: boolean; detail?: string; createdAt: number; updatedAt: number
 }
+export type TaskInput = Pick<Task,'title'|'workspaceId'|'prompt'|'goalMode'> & Partial<Pick<Task,'generateTitle'|'titleMaxChars'>>
 export interface QueueState {
   enabled: boolean
   /** Legacy v1 key, retained for old config compatibility. New dispatch uses activeIds. */
@@ -40,6 +43,8 @@ export function decode(value:unknown):QueueSettings|undefined {
       ||typeof raw.createdAt!=='number'||!Number.isFinite(raw.createdAt)
       ||typeof raw.updatedAt!=='number'||!Number.isFinite(raw.updatedAt)
       ||(raw.source!==undefined&&raw.source!=='queue'&&raw.source!=='discovered')
+      ||(raw.generateTitle!==undefined&&typeof raw.generateTitle!=='boolean')
+      ||(raw.titleMaxChars!==undefined&&(!Number.isInteger(raw.titleMaxChars)||typeof raw.titleMaxChars!=='number'||raw.titleMaxChars<8||raw.titleMaxChars>80))
       ||(raw.sessionId!==undefined&&typeof raw.sessionId!=='string')
       ||(raw.goalId!==undefined&&typeof raw.goalId!=='string')
       ||(raw.seenRunning!==undefined&&typeof raw.seenRunning!=='boolean')
@@ -61,16 +66,22 @@ export function decode(value:unknown):QueueSettings|undefined {
     tasks,error:q.error
   }}
 }
-export function add(q:QueueState,input:Pick<Task,'title'|'workspaceId'|'prompt'|'goalMode'>,id:string,now=Date.now()):QueueState{
-  if(!input.workspaceId||!input.prompt.trim()||q.tasks.some(t=>t.id===id))throw Error('工作区和任务说明不能为空，任务 ID 必须唯一')
-  return {...q,tasks:[...q.tasks,{...input,title:input.title.trim(),prompt:input.prompt.trim(),source:'queue',status:'pending',id,createdAt:now,updatedAt:now}]}
+function titleOptions(input: TaskInput): Pick<Task, 'generateTitle'|'titleMaxChars'> {
+  const max=input.titleMaxChars??24
+  if(!Number.isInteger(max)||max<8||max>80)throw Error('模型标题长度必须是 8–80 的整数')
+  return {generateTitle:input.generateTitle??false,titleMaxChars:max}
 }
-export function edit(q:QueueState,id:string,input:Pick<Task,'title'|'workspaceId'|'prompt'|'goalMode'>,now=Date.now()):QueueState{
+export function add(q:QueueState,input:TaskInput,id:string,now=Date.now()):QueueState{
+  if(!input.workspaceId||!input.prompt.trim()||q.tasks.some(t=>t.id===id))throw Error('工作区和任务说明不能为空，任务 ID 必须唯一')
+  const normalized = titleOptions(input)
+  return {...q,tasks:[...q.tasks,{...input,...normalized,title:input.title.trim(),prompt:input.prompt.trim(),source:'queue',status:'pending',id,createdAt:now,updatedAt:now}]}
+}
+export function edit(q:QueueState,id:string,input:TaskInput,now=Date.now()):QueueState{
   if(!input.workspaceId||!input.prompt.trim())throw Error('工作区和任务说明不能为空')
   return {...q,tasks:q.tasks.map(t=>{
     if(t.id!==id)return t
     if(t.status!=='pending'||t.source==='discovered')throw Error('只允许编辑尚未执行的队列任务')
-    return {...t,...input,title:input.title.trim(),prompt:input.prompt.trim(),updatedAt:now}
+    return {...t,...input,...titleOptions(input),title:input.title.trim(),prompt:input.prompt.trim(),updatedAt:now}
   })}
 }
 export function remove(q:QueueState,id:string):QueueState{
@@ -101,7 +112,7 @@ export function claim(q:QueueState,id:string,now=Date.now()):QueueState{
 }
 export function updateActive(q:QueueState,id:string,patch:Partial<Task>,now=Date.now()):QueueState{
   if(!q.activeIds.includes(id))throw Error('当前任务执行权已经失效')
-  const forbidden=['id','workspaceId','title','prompt','goalMode','createdAt','source']
+  const forbidden=['id','workspaceId','title','prompt','goalMode','generateTitle','titleMaxChars','createdAt','source']
   if(forbidden.some(k=>Object.prototype.hasOwnProperty.call(patch,k)))throw Error('不允许修改执行中任务身份')
   if(patch.sessionId&&q.tasks.some(t=>t.id!==id&&t.sessionId===patch.sessionId))throw Error('Session 已归属其他任务')
   const {status,...rest}=patch
