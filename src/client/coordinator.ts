@@ -248,7 +248,7 @@ export class Coordinator {
       if(await abandon())return
       if(task.goalMode){
         submitted=true
-        const response=await held.session.command('/goal '+task.prompt.replace(/\s+/g,' ').trim())
+        const response=await held.session.command('/goal '+task.prompt.trim())
         if(!response.ok)throw Error(response.error.message)
         if(!response.value.matched)throw Error('原生 /goal 命令不可用')
       }else{

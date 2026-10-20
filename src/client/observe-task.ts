@@ -29,7 +29,7 @@ export async function observeTask(session: SessionFace, ops: ObservationOperatio
   const patch: Partial<Task> = {}
   if (snapshot.running && !current.seenRunning) patch.seenRunning = true
   if (current.goalMode && projection && !current.goalId) {
-    if (projection.goal.objective !== current.prompt.replace(/\s+/g, ' ').trim()) {
+    if (projection.goal.objective !== current.prompt.trim()) {
       await ops.fail('failed', 'Goal 投影与提交目标不匹配；拒绝使用错误的完成信号')
       return false
     }
