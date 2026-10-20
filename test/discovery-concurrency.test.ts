@@ -18,6 +18,7 @@ class Face {
   state={running:true,awaitingFirstTurn:false,lastAgentError:null}
   goal:{goal:{id:string;objective:string;phase:string}}|null=null
   watchers=new Set<()=>void>()
+  commands:string[]=[]
   getSnapshot=()=>this.state
   subscribe=(fn:()=>void)=>{this.watchers.add(fn);return()=>{this.watchers.delete(fn)}}
   projections={faceOf:()=>({
@@ -27,6 +28,7 @@ class Face {
   emit(){for(const fn of this.watchers)fn()}
   async prompt(){this.state.running=true;this.emit();return {ok:true,value:{accepted:true}}}
   async command(line:string){
+    this.commands.push(line)
     if(line==='/goal resume'&&this.goal){this.goal.goal.phase='active';return {ok:true,value:{matched:true}}}
     this.goal={goal:{id:'goal-created',objective:line.slice(6),phase:'active'}}
     this.emit()
@@ -147,4 +149,18 @@ test('an imported unknown prompt must not be replayed as an empty task',()=>{
   let q=adopt(EMPTY_QUEUE,{sessionId:'old',workspaceId:'ws',title:'existing',goalMode:false},'imported')
   q=recover({...q,enabled:true})
   assert.throws(()=>retry(q,'imported'),/没有可复用的任务说明/)
+})
+
+test('T04 RED: concurrent resumeGoal requests must have exactly one command submission',async()=>{
+  let q=add(EMPTY_QUEUE,{workspaceId:'ws',prompt:'Goal work',title:'',goalMode:true},'old')
+  q={...q,tasks:[{...q.tasks[0]!,sessionId:'existing',goalId:'goal-old',status:'interrupted' as const}]}
+  const x=setup(q)
+  x.ordinary.state.running=false
+  x.ordinary.goal={goal:{id:'goal-old',objective:'Goal work',phase:'paused'}}
+  x.coordinator.start();await tick()
+  const results=await Promise.allSettled([x.coordinator.resumeGoal('old'),x.coordinator.resumeGoal('old')])
+  await tick()
+  assert.equal(x.ordinary.commands.filter(c=>c==='/goal resume').length,1)
+  assert.equal(results.filter(r=>r.status==='rejected').length,1)
+  x.coordinator.dispose()
 })
