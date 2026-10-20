@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { EMPTY_QUEUE, add, claim, decode, edit, move, next, recover, remove, retry, skip, updateActive } from '../src/queue.ts'
+import { EMPTY_QUEUE, add, claim, decode, edit, move, next, recover, remove, retry, skip, updateActive, setSessionId, releaseUnsubmittedClaim } from '../src/queue.ts'
 const input = (x:string) => ({title:x,workspaceId:`ws-${x}`,prompt:`do ${x}`,goalMode:true})
 const with2 = () => add(add(EMPTY_QUEUE,input('A'),'a',10),input('B'),'b',20)
 test('state decode rejects corruption, unknown status, duplicate IDs and inconsistent ownership',()=>{
@@ -78,4 +78,46 @@ test('T08 RED: retry must retain the original Session as a historical Attempt',(
   assert.equal(q.tasks[0]?.status,'pending')
   assert.deepEqual(q.tasks[0]?.attempts?.map(x=>x.sessionId),['old-session'])
   assert.equal(q.tasks[0]?.attempts?.[0]?.goalId,'old-goal')
+})
+
+test('T08: two retries keep all three distinct execution Attempts and legacy migration is idempotent',()=>{
+  let q=add(EMPTY_QUEUE,input('history'),'h')
+  const prior={...q.tasks[0]!,status:'interrupted' as const,
+    sessionId:'first-session',goalId:'first-goal'}
+  const legacy={version:1,queue:{...q,tasks:[prior]}}
+  q=decode(legacy)!.queue
+  assert.equal(q.tasks[0]?.attempts?.length,1)
+  assert.equal(decode({version:1,queue:q})?.queue.tasks[0]?.attempts?.length,1)
+  q=retry(q,'h')
+  q=claim({...q,enabled:true},'h')
+  q=setSessionId(q,'h','second-session')
+  q=updateActive(q,'h',{status:'interrupted',detail:'retry failed'})
+  q=retry(q,'h')
+  q=claim({...q,enabled:true},'h')
+  q=setSessionId(q,'h','third-session')
+  q=updateActive(q,'h',{status:'completed'})
+  assert.deepEqual(q.tasks[0]?.attempts?.map(a=>a.sessionId),
+    ['first-session','second-session','third-session'])
+  assert.equal(q.tasks[0]?.attempts?.length,3)
+  assert.equal(decode({version:1,queue:q})?.queue.tasks[0]?.attempts?.length,3)
+  assert.equal(q.tasks[0]?.status,'completed')
+})
+test('T08: revoked before Session creation leaves no phantom Attempt',()=>{
+  let q=add(EMPTY_QUEUE,input('no-start'),'h')
+  q=claim({...q,enabled:true},'h')
+  assert.equal(q.tasks[0]?.attempts?.length,1)
+  q=releaseUnsubmittedClaim(q,'h')
+  assert.equal(q.tasks[0]?.status,'pending')
+  assert.equal(q.tasks[0]?.attempts?.length,0)
+  assert.deepEqual(q.activeIds,[])
+})
+test('T08: duplicated or malformed Attempt data is rejected without queue reset',()=>{
+  const q=add(EMPTY_QUEUE,input('bad'),'h')
+  const attempt={id:'a',status:'running',createdAt:1,updatedAt:2,sessionId:'s'}
+  assert.equal(decode({version:1,queue:{...q,tasks:[{
+    ...q.tasks[0],attempts:[attempt,attempt]
+  }]}}),undefined)
+  assert.equal(decode({version:1,queue:{...q,tasks:[{
+    ...q.tasks[0],attempts:[{...attempt,updatedAt:'bad'}]
+  }]}}),undefined)
 })
