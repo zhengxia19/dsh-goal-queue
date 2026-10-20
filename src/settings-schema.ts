@@ -16,6 +16,7 @@ export const queueSchema = z.object({
       titleMaxChars: z.union([z.number().step(1).min(8).max(80),z.const(undefined)]), source: z.union([z.const('queue'),z.const('discovered'),z.const(undefined)]), status: z.union([...STATES]),
       sessionId: z.union([z.string(), z.const(undefined)]), goalId: z.union([z.string(), z.const(undefined)]),
       seenRunning: z.union([z.boolean(), z.const(undefined)]), detail: z.union([z.string(), z.const(undefined)]),
+      titleError: z.union([z.string(), z.const(undefined)]),
       attempts: z.union([z.array(z.object({
         id:z.string(),status:z.union([...STATES]),
         sessionId:z.union([z.string(),z.const(undefined)]),

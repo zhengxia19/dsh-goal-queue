@@ -5,6 +5,7 @@ import type { PropsStore, PropsHooks, PropsRuntime } from '@deepseek-ai/dsh-clie
 import type { QueueSettingsSource } from './settings.ts'
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { DEFAULT_SETTINGS, UNRESOLVED, summarizeQueue, type Task } from '../queue.ts'
+import { MAX_TITLE_INPUT_CHARS } from '../title-policy.ts'
 import type { viewStore } from './store.ts'
 import type { Coordinator } from './coordinator.ts'
 
@@ -76,6 +77,10 @@ export function QueueBoard(props:BoardProps) {
   const onSave = async (event:FormEvent)=>{
     event.preventDefault()
     if(submitting)return
+    if(generateTitle&&prompt.length>MAX_TITLE_INPUT_CHARS){
+      props.actions.error('模型标题最多接受 8000 个 UTF-16 代码单元，请缩短题词或关闭标题生成')
+      return
+    }
     setSubmitting(true)
     const input={title:generateTitle?'':title,workspaceId,prompt,goalMode,generateTitle,titleMaxChars}
     try {
@@ -125,6 +130,7 @@ export function QueueBoard(props:BoardProps) {
           </div>
           <p className="gq-prompt">{task.prompt||'已纳入 DPH 现有 Session；无需重新提交指令'}</p>
           {task.detail&&<p className="gq-detail">{task.detail}</p>}
+           {task.titleError&&<p className="gq-detail" role="status">{task.titleError}</p>}
           <div className="gq-task-controls">
             <button type="button" disabled={!editable||!q.tasks.slice(0,i).some(t=>t.status==='pending')} onClick={()=>{void change(()=>props.operations.move(task.id,-1))}}>上移</button>
             <button type="button" disabled={!editable||!q.tasks.slice(i+1).some(t=>t.status==='pending')} onClick={()=>{void change(()=>props.operations.move(task.id,1))}}>下移</button>
@@ -156,8 +162,9 @@ export function QueueBoard(props:BoardProps) {
         </select></label>
         <label className="gq-check"><input type="checkbox" checked={goalMode} onChange={e=>setGoalMode(e.target.checked)}/> 使用 DSH 原生目标模式（/goal）</label>
         <label>任务说明<textarea required value={prompt} onChange={e=>setPrompt(e.target.value)} rows={7} placeholder="说明任务、约束和验收标准"/></label>
+        {generateTitle&&<p role={prompt.length>MAX_TITLE_INPUT_CHARS?'alert':'status'}>标题辅助请求最多 {MAX_TITLE_INPUT_CHARS} 个 UTF-16 代码单元，当前 {prompt.length}。超限可取消模型标题，原任务题词不会被截断。</p>}
         <p>标题可留空；不勾选时普通任务沿用 DSH 原生标题，纯 /goal 无法触发首消息自动命名。勾选后插件通过 Host 无工具的独立模型请求生成标题（8–80 字符硬上限），不向任务 Session 发送额外执行指令。</p>
-        <footer><button type="button" onClick={()=>setEditing(null)}>取消</button><button className="gq-primary" disabled={submitting||!workspaceId} type="submit">保存</button></footer>
+        <footer><button type="button" onClick={()=>setEditing(null)}>取消</button><button className="gq-primary" disabled={submitting||!workspaceId||(generateTitle&&prompt.length>MAX_TITLE_INPUT_CHARS)} type="submit">保存</button></footer>
       </form>
     </div>}
   </div>,document.body)

@@ -243,7 +243,7 @@ export class Coordinator {
         } catch(e) {
           console.warn('[goal-queue] optional AI title generation failed; task proceeds normally:',err(e))
           await this.write(q=>q.activeIds.includes(task.id)
-            ?updateActive(q,task.id,{detail:'模型标题生成失败：'+err(e)+'；任务继续正常派发'}):q)
+            ?updateActive(q,task.id,{titleError:'模型标题生成失败：'+err(e),detail:'模型标题生成失败；任务继续正常派发'}):q)
         }
       }
       if(await abandon())return

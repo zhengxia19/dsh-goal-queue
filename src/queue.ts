@@ -13,6 +13,7 @@ export interface Task {
   generateTitle?: boolean; titleMaxChars?: number
   seenRunning?: boolean; detail?: string; createdAt: number; updatedAt: number
   attempts?: TaskAttempt[]
+  titleError?: string
 }
 export type TaskInput = Pick<Task,'title'|'workspaceId'|'prompt'|'goalMode'> & Partial<Pick<Task,'generateTitle'|'titleMaxChars'>>
 export interface QueueState {
@@ -91,6 +92,7 @@ export function decode(value:unknown):QueueSettings|undefined {
       ||(raw.goalId!==undefined&&typeof raw.goalId!=='string')
       ||(raw.seenRunning!==undefined&&typeof raw.seenRunning!=='boolean')
       ||(raw.detail!==undefined&&typeof raw.detail!=='string')
+      ||(raw.titleError!==undefined&&typeof raw.titleError!=='string')
       ||(raw.attempts!==undefined&&!validAttempts(raw.attempts)))return
     if(typeof raw.sessionId==='string'){
       if(sessionIds.has(raw.sessionId))return
