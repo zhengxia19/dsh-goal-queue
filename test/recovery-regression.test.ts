@@ -14,12 +14,14 @@ class SettingsDouble {
   failForeverAfter = 0
   commitBeforeFailure = false
   attempts = 0
+  beforeStartingWrite?: () => Promise<void>
   listeners = new Set<() => void>()
   constructor(queue: QueueState) { this.value = { version: 1, queue } }
   getSnapshot() { return { status: this.status, value: this.status === 'ready' ? this.value : undefined, error: this.error } }
   subscribe(fn: () => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn) } }
   async set(_field: string, queue: QueueState) {
     if (this.status !== 'ready') throw Error('Host settings not ready')
+    if (queue.tasks.some(t => t.status === 'starting')) await this.beforeStartingWrite?.()
     this.attempts++
     const fail = this.attempts === this.failAt || (this.failForeverAfter > 0 && this.attempts >= this.failForeverAfter)
     if (!fail || this.commitBeforeFailure) {
@@ -169,5 +171,27 @@ test('T04 a later Pause click cancels pending Start authorization', async () => 
   await Promise.all([starting, stopping]); await settle()
   assert.equal(settings.value.queue.enabled, false)
   assert.equal(x.creates(), 0)
+  x.coordinator.dispose()
+})
+
+test('T01 RED: Pause during a delayed claim returns an unsubmitted task to pending', async () => {
+  const settings = new SettingsDouble(add(EMPTY_QUEUE, input('claim-race'), 'a'))
+  const x = fixture(settings)
+  let release!: () => void
+  let signalEntered!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  const entered = new Promise<void>(resolve => { signalEntered = resolve })
+  settings.beforeStartingWrite = async () => { signalEntered(); await held }
+  x.coordinator.start()
+  await settle()
+  await x.coordinator.enable(true)
+  await entered
+  const pausing = x.coordinator.enable(false)
+  release()
+  await pausing
+  await settle()
+  assert.equal(x.creates(), 0)
+  assert.equal(settings.value.queue.tasks[0]?.status, 'pending')
+  assert.deepEqual(settings.value.queue.activeIds, [])
   x.coordinator.dispose()
 })
