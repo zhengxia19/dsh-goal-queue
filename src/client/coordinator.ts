@@ -107,8 +107,38 @@ export class Coordinator {
   }
   remove(id:string):Promise<void>{return this.write(q=>remove(q,id))}
   move(id:string,offset:-1|1):Promise<void>{return this.write(q=>move(q,id,offset))}
-  retry(id:string):Promise<void>{return this.write(q=>retry(q,id))}
-  skip(id:string):Promise<void>{return this.write(q=>skip(q,id))}
+  /** Inspect the original Host Session immediately before an irreversible disposition. */
+  private async disposeAbnormal(id:string,action:'retry'|'skip'):Promise<void>{
+    const task=this.queue().tasks.find(t=>t.id===id)
+    if(!task||!UNRESOLVED.includes(task.status))throw Error('任务已经处置或状态已变化')
+    if(!this.connected())throw Error('Host 未连接，无法核实原 Session')
+    if(!task.sessionId){
+      if(action==='retry')throw Error('原 Session ID 缺失，无法确认是否已执行；请检查工作区并人工跳过后重新创建任务')
+      // Explicit UI confirmation is required; preserve that no Host evidence was available.
+      return this.write(q=>{
+        const result=skip(q,id)
+        return {...result,tasks:result.tasks.map(t=>t.id===id
+          ?{...t,detail:'用户人工跳过（原 Session ID 缺失，未能验证旧操作是否执行）'}:t)}
+      })
+    }
+    const generation=this.epoch
+    const ref=this.sessions.retain(task.sessionId as SessionId,{source:'goalQueue'})
+    try{
+      await ref.ready
+      if(generation!==this.epoch||!this.connected())throw Error('连接切换，原 Session 状态不可核实')
+      const current=ref.binding.session.getSnapshot()
+      if(current.running)throw Error('原 Session '+task.sessionId+' 仍在运行，不能重新排队或跳过')
+      await this.write(q=>{
+        if(generation!==this.epoch||!this.connected()||ref.binding.session.getSnapshot().running)
+          throw Error('原 Session 状态已经改变，请重新检查')
+        if(q.tasks.find(t=>t.id===id)?.sessionId!==task.sessionId)
+          throw Error('任务对应的 Session 已改变，拒绝处置')
+        return action==='retry'?retry(q,id):skip(q,id)
+      })
+    }finally{ref.release()}
+  }
+  retry(id:string):Promise<void>{return this.disposeAbnormal(id,'retry')}
+  skip(id:string):Promise<void>{return this.disposeAbnormal(id,'skip')}
   setConcurrency(limit:number):Promise<void>{return this.write(q=>setConcurrency(q,limit))}
   open(id:string):void{
     const sessionId=this.queue().tasks.find(t=>t.id===id)?.sessionId
