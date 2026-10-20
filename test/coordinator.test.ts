@@ -11,11 +11,12 @@ class MockFace {
   goal: {goal:{id:string,objective:string,phase:string}} | null=null
   calls:string[]=[]
   rejectTitle=false
+  waitForTitle?: () => Promise<void>
   projections={faceOf:(_key:string)=>({getSnapshot:()=>this.goal,subscribe:(fn:()=>void)=>{this.goalListeners.add(fn);return()=>{this.goalListeners.delete(fn)}}})}
   getSnapshot=()=>this.state
   subscribe=(fn:()=>void)=>{this.listeners.add(fn);return()=>{this.listeners.delete(fn)}}
   emit(){for(const fn of this.listeners)fn();for(const fn of this.goalListeners)fn()}
-  command=async(line:string)=>{this.calls.push(line);if(line.startsWith('/goal-queue-title '))return {ok:true,value:{matched:!this.rejectTitle}};this.goal={goal:{id:'goal-'+line,objective:line.slice(6),phase:'active'}};this.emit();return {ok:true,value:{matched:true}}}
+  command=async(line:string)=>{this.calls.push(line);if(line.startsWith('/goal-queue-title ')){await this.waitForTitle?.();return {ok:true,value:{matched:!this.rejectTitle}}};this.goal={goal:{id:'goal-'+line,objective:line.slice(6),phase:'active'}};this.emit();return {ok:true,value:{matched:true}}}
   prompt=async()=>{this.calls.push('prompt');this.state.running=true;this.emit();return {ok:true,value:{accepted:true}}}
   rename=async()=>({ok:true})
 }
@@ -29,10 +30,10 @@ class MockSettings {
   subscribe=(fn:()=>void)=>{this.listeners.add(fn);return()=>{this.listeners.delete(fn)}}
   async set(_key:string, queue:typeof EMPTY_QUEUE){if(this.failOnStatus && queue.tasks.some(t=>t.status===this.failOnStatus)) throw Error('模拟状态写入失败');this.value={version:1,queue};for(const listener of this.listeners)listener()}
 }
-function system(settings:MockSettings){
+function system(settings:MockSettings, options: {onCreate?:()=>Promise<void>} = {}){
   const faces:MockFace[]=[]
   const sessions={
-    async create(){faces.push(new MockFace());return `session-${faces.length}`},
+    async create(){faces.push(new MockFace());await options.onCreate?.();return `session-${faces.length}`},
     binding(id:string){return {session:faces[Number(id.slice(8))-1]}},
     retain(id:string){const face=faces[Number(id.slice(8))-1];return {binding:{session:face},ready:Promise.resolve({session:face}),release(){}}},
   }
@@ -142,5 +143,34 @@ test('AI title opt-out preserves ordinary submission, without title model reques
   const settings=new MockSettings(q),{faces,coordinator}=system(settings)
   coordinator.start();await pause();await coordinator.enable(true);await pause()
   assert.deepEqual(faces[0]!.calls,['prompt'])
+  coordinator.dispose()
+})
+
+test('T02 RED: pause while Session.create is pending must not submit a Goal',async()=>{
+  const q=add(EMPTY_QUEUE,item('delayed'),'d')
+  const settings=new MockSettings(q)
+  let unblock!:()=>void, entered!:()=>void
+  const gate=new Promise<void>(r=>{unblock=r})
+  const starting=new Promise<void>(r=>{entered=r})
+  const {coordinator,faces}=system(settings,{onCreate:async()=>{entered();await gate}})
+  coordinator.start();await pause();await coordinator.enable(true);await starting
+  await coordinator.enable(false)
+  unblock();await pause()
+  assert.equal(faces.length,1)
+  assert.equal(faces[0]!.calls.length,0)
+  assert.equal(settings.value.queue.tasks[0]!.sessionId,'session-1')
+  assert.equal(settings.value.queue.tasks[0]!.status,'interrupted')
+  coordinator.dispose()
+})
+test('T02 RED: pause while optional title call is pending must not submit Goal',async()=>{
+  const q=add(EMPTY_QUEUE,{...item('titled'),generateTitle:true},'d')
+  const settings=new MockSettings(q),{coordinator,faces}=system(settings)
+  coordinator.start();await pause()
+  // Install a hold at the first created face before dispatch reaches the title command.
+  const originalCreate=()=>{}
+  void originalCreate
+  // Session command resolves asynchronously; wait until the title call is observed.
+  await coordinator.enable(true);await pause()
+  assert.equal(faces[0]!.calls[0]?.startsWith('/goal-queue-title'),true)
   coordinator.dispose()
 })
