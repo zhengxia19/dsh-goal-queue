@@ -69,3 +69,13 @@ test('T02 a blocked or failed task also prevents implicit leapfrogging', () => {
     assert.equal(next(q)?.id, 'b')
   }
 })
+
+test('T08 RED: retry must retain the original Session as a historical Attempt',()=>{
+  let q=add(EMPTY_QUEUE,input('history'),'h')
+  q={...q,tasks:q.tasks.map(t=>({...t,status:'interrupted' as const,
+    sessionId:'old-session',goalId:'old-goal',detail:'prior error'}))}
+  q=retry(q,'h')
+  assert.equal(q.tasks[0]?.status,'pending')
+  assert.deepEqual(q.tasks[0]?.attempts?.map(x=>x.sessionId),['old-session'])
+  assert.equal(q.tasks[0]?.attempts?.[0]?.goalId,'old-goal')
+})
