@@ -176,8 +176,14 @@ export function updateActive(q:QueueState,id:string,patch:Partial<Task>,now=Date
 export function releaseUnsubmittedClaim(q:QueueState,id:string):QueueState{
   const task=q.tasks.find(t=>t.id===id)
   if(!task||task.status!=='starting'||task.sessionId||!q.activeIds.includes(id))return q
-  return withActive({...q,tasks:q.tasks.map(t=>t.id===id
-    ?{...t,status:'pending',updatedAt:Date.now()}:t)},q.activeIds.filter(x=>x!==id))
+  return withActive({...q,tasks:q.tasks.map(t=>{
+    if(t.id!==id)return t
+    const attempts=attemptsOf(t)
+    // This reservation never reached a Session: discard its unsubmitted attempt.
+    return {...t,status:'pending',updatedAt:Date.now(),
+      attempts:attempts.at(-1)?.status==='starting'&&!attempts.at(-1)?.sessionId
+        ?attempts.slice(0,-1):attempts}
+  })},q.activeIds.filter(x=>x!==id))
 }
 export function setSessionId(q:QueueState,id:string,sessionId:string):QueueState{
   if(!q.activeIds.includes(id))throw Error('当前任务执行权已失效')
