@@ -179,3 +179,16 @@ test('T02 RED: pause while optional title call is pending must not submit Goal',
   assert.equal(settings.value.queue.tasks[0]!.status,'interrupted')
   coordinator.dispose()
 })
+
+test('T07 RED: native Goal submission preserves all internal line breaks',async()=>{
+  const instructions='目标：验证多行题词\n\n1. 安装依赖\n2. 执行测试\n\n```bash\nnpm run build\nnpm test\n```'
+  const q=add(EMPTY_QUEUE,{workspaceId:'ws',title:'',prompt:instructions,goalMode:true},'g')
+  const settings=new MockSettings(q),{faces,coordinator}=system(settings)
+  coordinator.start();await pause();await coordinator.enable(true);await pause()
+  assert.equal(faces[0]!.calls[0],'/goal '+instructions)
+  faces[0]!.state.running=true;faces[0]!.emit();await pause()
+  faces[0]!.goal!.goal.phase='complete'
+  faces[0]!.state.running=false;faces[0]!.emit();await pause()
+  assert.equal(settings.value.queue.tasks[0]!.status,'completed')
+  coordinator.dispose()
+})
