@@ -218,7 +218,8 @@ test('T09 RED: a completed Session reused by DPH occupies one observed slot',asy
   const x=setup(q)
   x.coordinator.start();await tick()
   await x.coordinator.discover();await tick()
-  assert.deepEqual(x.host.value.queue.sessionActivity,['existing'])
+  await x.coordinator.discover();await tick()
+  assert.deepEqual(x.host.value.queue.sessionActivity,['existing'],'repeated scans must not double count')
   await x.coordinator.enable(true);await tick()
   assert.equal(x.created(),0)
   x.ordinary.state.running=false;x.ordinary.emit();await tick()
@@ -226,4 +227,11 @@ test('T09 RED: a completed Session reused by DPH occupies one observed slot',asy
   assert.equal(x.created(),1)
   assert.equal(x.host.value.queue.tasks[0]?.status,'completed')
   x.coordinator.dispose()
+})
+
+test('T09: disconnected Session activity does not survive boot recovery as a false slot',()=>{
+  const q={...EMPTY_QUEUE,sessionActivity:['old-session']}
+  const recovered=recover(q)
+  assert.deepEqual(recovered.sessionActivity,[])
+  assert.equal(recovered.enabled,false)
 })
