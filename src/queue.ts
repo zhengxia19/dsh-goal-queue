@@ -147,6 +147,13 @@ export function setConcurrency(q:QueueState,maxConcurrent:number):QueueState{
   if(!Number.isInteger(maxConcurrent)||maxConcurrent<1||maxConcurrent>8)throw Error('并发任务数必须是 1–8 的整数')
   return {...q,maxConcurrent}
 }
+export function summarizeQueue(q:QueueState):{unresolved:number;running:number;pending:number}{
+  return {
+    unresolved:q.tasks.filter(t=>UNRESOLVED.includes(t.status)).length,
+    running:q.activeIds.length+q.sessionActivity.length,
+    pending:q.tasks.filter(t=>t.status==='pending').length
+  }
+}
 export function next(q:QueueState):Task|undefined{
   if(!q.enabled||q.activeIds.length+q.sessionActivity.length>=q.maxConcurrent||q.tasks.some(t=>UNRESOLVED.includes(t.status)))return
   return q.tasks.find(t=>t.status==='pending'&&t.source!=='discovered')

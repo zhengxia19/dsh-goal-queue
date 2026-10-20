@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import type { PropsStore, PropsHooks, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { QueueSettingsSource } from './settings.ts'
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { DEFAULT_SETTINGS, UNRESOLVED, type Task } from '../queue.ts'
+import { DEFAULT_SETTINGS, UNRESOLVED, summarizeQueue, type Task } from '../queue.ts'
 import type { viewStore } from './store.ts'
 import type { Coordinator } from './coordinator.ts'
 
@@ -28,6 +28,7 @@ export function QueueBoard(props:BoardProps) {
   const authorized=useSyncExternalStore(props.operations.subscribeAuthorization, props.operations.isAuthorized)
   const queueEnabled=q.enabled && authorized
   const blockers = q.tasks.filter(t => UNRESOLVED.includes(t.status))
+  const summary=summarizeQueue(q)
   const [editing,setEditing] = useState<string|null>(null)
   const [title,setTitle] = useState('')
   const [workspaceId,setWorkspaceId] = useState('')
@@ -87,7 +88,7 @@ export function QueueBoard(props:BoardProps) {
   const busy = q.activeIds.length+q.sessionActivity.length > 0
   return createPortal(<div className="gq-root" role="dialog" aria-modal="true" aria-label="DSH 任务队列">
     <header className="gq-head">
-      <div><h1>DSH 任务队列</h1><span>跨工作区任务 · {q.tasks.filter(t=>t.status==='pending').length} 项待执行</span></div>
+      <div><h1>DSH 任务队列</h1><span>跨工作区任务 · {summary.pending} 项待执行 · {summary.unresolved} 项异常</span></div>
       <div className="gq-actions">
         <button type="button" onClick={newForm}>添加任务</button>
         <button type="button" disabled={discovering} onClick={()=>{setDiscovering(true);void change(()=>props.operations.discover().then(()=>{})).finally(()=>setDiscovering(false))}}>{discovering?'扫描中…':'刷新运行任务'}</button>

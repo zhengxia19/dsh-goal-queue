@@ -124,7 +124,7 @@ test('T08: duplicated or malformed Attempt data is rejected without queue reset'
 
 test('T10 RED: queue exposes a consistent summary including unresolved tasks',async()=>{
   const queueModule=await import('../src/queue.ts')
-  const summarize=(queueModule as Record<string,unknown>).summarizeQueue
+  const summarize=(queueModule as unknown as Record<string,unknown>).summarizeQueue
   assert.equal(typeof summarize,'function')
   let q=add(add(EMPTY_QUEUE,input('A'),'a'),input('B'),'b')
   q={...q,sessionActivity:['old-s'],tasks:q.tasks.map(t=>t.id==='a'
