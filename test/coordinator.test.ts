@@ -192,3 +192,17 @@ test('T07 RED: native Goal submission preserves all internal line breaks',async(
   assert.equal(settings.value.queue.tasks[0]!.status,'completed')
   coordinator.dispose()
 })
+
+test('T11 RED: title diagnostics survive native Goal completion',async()=>{
+  const q=add(EMPTY_QUEUE,{...item('title-error'),generateTitle:true},'t')
+  const settings=new MockSettings(q),{faces,coordinator}=system(settings,{onFace:face=>{face.rejectTitle=true}})
+  coordinator.start();await pause();await coordinator.enable(true);await pause()
+  assert.equal(settings.value.queue.tasks[0]!.status,'running')
+  faces[0]!.state.running=true;faces[0]!.emit();await pause()
+  faces[0]!.goal!.goal.phase='complete'
+  faces[0]!.state.running=false;faces[0]!.emit();await pause()
+  const task=settings.value.queue.tasks[0]!
+  assert.equal(task.status,'completed')
+  assert.match((task as {titleError?:string}).titleError??'',/模型标题/)
+  coordinator.dispose()
+})
