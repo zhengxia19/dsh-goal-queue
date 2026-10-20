@@ -40,6 +40,7 @@ export function QueueBoard(props:BoardProps) {
   const [titleMaxChars,setTitleMaxChars] = useState(24)
   const [submitting,setSubmitting] = useState(false)
   const [discovering,setDiscovering] = useState(false)
+  const [resuming,setResuming] = useState<string|null>(null)
   const [filter,setFilter] = useState<TaskFilter>('current')
   const [expanded,setExpanded] = useState<Record<string,boolean>>({})
   useEffect(()=>{
@@ -153,7 +154,13 @@ export function QueueBoard(props:BoardProps) {
             {task.sessionId&&<button type="button" onClick={()=>{props.operations.open(task.id);props.actions.close()}}>打开 Session</button>}
             {Boolean(task.attempts?.length)&&<button type="button" aria-expanded={Boolean(expanded[task.id])}
               onClick={()=>setExpanded(s=>({...s,[task.id]:!s[task.id]}))}>执行记录 ({task.attempts?.length})</button>}
-            {(task.status==='interrupted'||task.status==='blocked')&&task.goalMode&&task.sessionId&&<button type="button" onClick={()=>{if(!window.confirm('将在原 Session 内执行 /goal resume；请确认先前的执行已经停止。'))return;void change(()=>props.operations.resumeGoal(task.id))}}>继续原 Goal</button>}
+            {(task.status==='interrupted'||task.status==='blocked')&&task.goalMode&&task.sessionId&&<button
+              type="button" disabled={resuming!==null} aria-busy={resuming===task.id}
+              onClick={()=>{
+                if(resuming!==null||!window.confirm('将在原 Session 内执行 /goal resume；请确认先前的执行已经停止。'))return
+                setResuming(task.id)
+                void change(()=>props.operations.resumeGoal(task.id)).finally(()=>setResuming(null))
+              }}>{resuming===task.id?'正在核实旧 Goal…':'继续原 Goal'}</button>}
             {UNRESOLVED.includes(task.status)&&Boolean(task.prompt.trim())&&<button type="button" onClick={()=>{
               if(!window.confirm('重新排队将创建新的 Session。请先确认旧 Session 已停止，防止重复修改代码。'))return
               void change(()=>props.operations.retry(task.id))
