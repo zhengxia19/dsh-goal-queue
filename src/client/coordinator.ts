@@ -352,8 +352,8 @@ export class Coordinator {
   /** Explicit user action; resumes only an existing Goal in its original Session. */
   async resumeGoal(id:string):Promise<void>{
     const task=this.queue().tasks.find(t=>t.id===id)
-    if(!task||task.status!=='interrupted'||!task.goalMode||!task.sessionId)
-      throw Error('只有已中断且保留原 Session 的 Goal 可以激活')
+    if(!task||!['interrupted','blocked'].includes(task.status)||!task.goalMode||!task.sessionId)
+      throw Error('只有已中断或阻塞且保留原 Session 的 Goal 可以继续')
     const generation=this.epoch
     const ref=this.sessions.retain(task.sessionId as SessionId,{source:'goalQueue'})
     let claimed=false

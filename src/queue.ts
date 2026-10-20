@@ -171,7 +171,7 @@ export function updateTitle(q:QueueState,id:string,title:string):QueueState{
 /** Atomically reserve the original Session for exactly one explicit Goal resume. */
 export function claimGoalResume(q:QueueState,id:string,goalId:string,now=Date.now()):QueueState{
   const task=q.tasks.find(t=>t.id===id)
-  if(!task||task.status!=='interrupted'||!task.goalMode||!task.sessionId)
+  if(!task||!['interrupted','blocked'].includes(task.status)||!task.goalMode||!task.sessionId)
     throw Error('旧 Goal 状态已改变或不能恢复，请刷新')
   if(task.goalId&&task.goalId!==goalId)throw Error('原 Goal ID 已改变，拒绝恢复')
   if(q.activeIds.length>=q.maxConcurrent)throw Error('当前并发名额已满')

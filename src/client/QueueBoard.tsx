@@ -130,7 +130,7 @@ export function QueueBoard(props:BoardProps) {
             <button type="button" disabled={!editable} onClick={()=>editForm(task)}>编辑</button>
             <button type="button" disabled={q.activeIds.includes(task.id)||UNRESOLVED.includes(task.status)} onClick={()=>{void change(()=>props.operations.remove(task.id))}}>删除</button>
             {task.sessionId&&<button type="button" onClick={()=>{props.operations.open(task.id);props.actions.close()}}>打开 Session</button>}
-            {task.status==='interrupted'&&task.goalMode&&task.sessionId&&<button type="button" onClick={()=>{if(!window.confirm('将在原 Session 内执行 /goal resume；请确认先前的执行已经停止。'))return;void change(()=>props.operations.resumeGoal(task.id))}}>激活旧 Goal</button>}
+            {(task.status==='interrupted'||task.status==='blocked')&&task.goalMode&&task.sessionId&&<button type="button" onClick={()=>{if(!window.confirm('将在原 Session 内执行 /goal resume；请确认先前的执行已经停止。'))return;void change(()=>props.operations.resumeGoal(task.id))}}>继续原 Goal</button>}
             {UNRESOLVED.includes(task.status)&&Boolean(task.prompt.trim())&&<button type="button" onClick={()=>{
               if(!window.confirm('重新排队将创建新的 Session。请先确认旧 Session 已停止，防止重复修改代码。'))return
               void change(()=>props.operations.retry(task.id))
