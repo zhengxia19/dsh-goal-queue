@@ -20,12 +20,14 @@ export interface QueueState {
   /** Legacy v1 key, retained for old config compatibility. New dispatch uses activeIds. */
   activeId: string|null
   activeIds: string[]
+  /** Running Sessions from completed/older attempts; never task execution owners. */
+  sessionActivity: string[]
   maxConcurrent: number
   tasks: Task[]
   error: string
 }
 export interface QueueSettings { version: 1; queue: QueueState }
-export const EMPTY_QUEUE: QueueState = {enabled:false,activeId:null,activeIds:[],maxConcurrent:1,tasks:[],error:''}
+export const EMPTY_QUEUE: QueueState = {enabled:false,activeId:null,activeIds:[],sessionActivity:[],maxConcurrent:1,tasks:[],error:''}
 export const DEFAULT_SETTINGS: QueueSettings = {version:VERSION,queue:EMPTY_QUEUE}
 export const UNRESOLVED: readonly TaskStatus[] = ['blocked','failed','interrupted']
 export const STATES: readonly TaskStatus[] = ['pending','starting','running','completed','blocked','failed','interrupted','skipped']
@@ -72,6 +74,9 @@ export function decode(value:unknown):QueueSettings|undefined {
   if(q.activeId!==undefined&&q.activeId!==null&&typeof q.activeId!=='string')return
   const max=q.maxConcurrent===undefined?1:q.maxConcurrent
   if(!Number.isInteger(max)||typeof max!=='number'||max<1||max>8)return
+  const activities=q.sessionActivity===undefined?[]:q.sessionActivity
+  if(!Array.isArray(activities)||activities.some(x=>typeof x!=='string'||!x)
+    ||new Set(activities).size!==activities.length)return
   const tasks:Task[]=[],ids=new Set<string>(),sessionIds=new Set<string>()
   for(const raw of q.tasks){
     if(!object(raw)||typeof raw.id!=='string'||!raw.id||ids.has(raw.id)
@@ -103,7 +108,7 @@ export function decode(value:unknown):QueueSettings|undefined {
     ||running.some(x=>!slots.includes(x)))return
   return {version:VERSION,queue:{
     enabled:q.enabled,activeId:legacy(slots),activeIds:[...slots],maxConcurrent:max,
-    tasks,error:q.error
+    tasks,sessionActivity:[...activities],error:q.error
   }}
 }
 function titleOptions(input: TaskInput): Pick<Task, 'generateTitle'|'titleMaxChars'> {
@@ -143,8 +148,18 @@ export function setConcurrency(q:QueueState,maxConcurrent:number):QueueState{
   return {...q,maxConcurrent}
 }
 export function next(q:QueueState):Task|undefined{
-  if(!q.enabled||q.activeIds.length>=q.maxConcurrent||q.tasks.some(t=>UNRESOLVED.includes(t.status)))return
+  if(!q.enabled||q.activeIds.length+q.sessionActivity.length>=q.maxConcurrent||q.tasks.some(t=>UNRESOLVED.includes(t.status)))return
   return q.tasks.find(t=>t.status==='pending'&&t.source!=='discovered')
+}
+/** A currently running Session is counted once, without reopening a completed task. */
+export function trackSessionActivity(q:QueueState,sessionId:string):QueueState{
+  if(q.tasks.some(t=>q.activeIds.includes(t.id)&&t.sessionId===sessionId))return q
+  if(q.sessionActivity.includes(sessionId))return q
+  return {...q,sessionActivity:[...q.sessionActivity,sessionId]}
+}
+export function releaseSessionActivity(q:QueueState,sessionId:string):QueueState{
+  if(!q.sessionActivity.includes(sessionId))return q
+  return {...q,sessionActivity:q.sessionActivity.filter(x=>x!==sessionId)}
 }
 export function claim(q:QueueState,id:string,now=Date.now()):QueueState{
   if(next(q)?.id!==id)throw Error('任务不在可调度队首或并发容量已满')
@@ -191,9 +206,9 @@ export function setSessionId(q:QueueState,id:string,sessionId:string):QueueState
   return {...q,tasks:q.tasks.map(t=>t.id===id?amendAttempt(t,{sessionId},Date.now()):t)}
 }
 export function recover(q:QueueState,reason='应用重新启动，旧会话等待核实'):QueueState{
-  if(!q.enabled&&!q.activeIds.length)return q
+  if(!q.enabled&&!q.activeIds.length&&!q.sessionActivity.length)return q
   const affected=new Set(q.activeIds)
-  return withActive({...q,enabled:false,error:reason,
+  return withActive({...q,enabled:false,error:reason,sessionActivity:[],
     tasks:q.tasks.map(t=>affected.has(t.id)?amendAttempt(t,{status:'interrupted',detail:reason},Date.now()):t)
   },[])
 }
@@ -227,7 +242,7 @@ export function claimGoalResume(q:QueueState,id:string,goalId:string,now=Date.no
   if(!task||!['interrupted','blocked'].includes(task.status)||!task.goalMode||!task.sessionId)
     throw Error('旧 Goal 状态已改变或不能恢复，请刷新')
   if(task.goalId&&task.goalId!==goalId)throw Error('原 Goal ID 已改变，拒绝恢复')
-  if(q.activeIds.length>=q.maxConcurrent)throw Error('当前并发名额已满')
+  if(q.activeIds.length+q.sessionActivity.length>=q.maxConcurrent)throw Error('当前并发名额已满')
   if(q.activeIds.includes(id))throw Error('该 Goal 已处于恢复过程')
   return withActive({...q,tasks:q.tasks.map(t=>t.id===id
     ?amendAttempt(t,{status:'starting',goalId,detail:'旧 Goal 恢复命令准备中'},now):t)},

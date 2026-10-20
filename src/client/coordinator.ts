@@ -5,7 +5,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { QueueSettingsSource } from './settings.ts'
 import { observeTask } from './observe-task.ts'
 import { UNRESOLVED,add,adopt,claim,decode,edit,move,next,recover,remove,retry,
-  setConcurrency,setSessionId,skip,updateActive,updateTitle,releaseUnsubmittedClaim,claimGoalResume,type QueueState,type Task,type TaskInput } from '../queue.ts'
+  setConcurrency,setSessionId,skip,updateActive,updateTitle,releaseUnsubmittedClaim,claimGoalResume,trackSessionActivity,releaseSessionActivity,type QueueState,type Task,type TaskInput } from '../queue.ts'
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
   interface SessionReferenceSourceMap { goalQueue: unknown }
 }
@@ -17,6 +17,7 @@ const err=(e:unknown)=>e instanceof Error?e.message:String(e)
 export class Coordinator {
   private chain:Promise<void>=Promise.resolve()
   private live=new Map<string,Active>()
+  private detachedActivity=new Map<string,{reference:SessionReference;stop:()=>void}>()
   private observing=new Set<string>()
   private observeAgain=new Set<string>()
   private checking=false
@@ -273,7 +274,37 @@ export class Coordinator {
     this.live.delete(id);for(const stop of held.subscriptions.splice(0))stop()
     held.reference.release()
   }
-  private releaseAll():void{for(const id of [...this.live.keys()])this.release(id)}
+  private releaseDetached(id:string):void{
+    const held=this.detachedActivity.get(id)
+    if(!held)return
+    this.detachedActivity.delete(id);held.stop();held.reference.release()
+  }
+  private releaseAll():void{
+    for(const id of [...this.live.keys()])this.release(id)
+    for(const id of [...this.detachedActivity.keys()])this.releaseDetached(id)
+  }
+  /** Watch reused old Sessions independently of their immutable task history. */
+  private async trackDetached(id:string,generation:number):Promise<void>{
+    if(this.detachedActivity.has(id))return
+    const reference=this.sessions.retain(id as SessionId,{source:'goalQueue'})
+    try{await reference.ready}catch(e){reference.release();throw e}
+    if(generation!==this.epoch||this.closed||!this.connected()){
+      reference.release();throw Error('连接变更，无法确认旧 Session')
+    }
+    const session=reference.binding.session
+    if(!session.getSnapshot().running){reference.release();return}
+    await this.write(q=>trackSessionActivity(q,id))
+    if(generation!==this.epoch||this.closed){reference.release();return}
+    const onStop=()=>{
+      if(session.getSnapshot().running)return
+      void this.write(q=>releaseSessionActivity(q,id)).then(()=>{
+        this.releaseDetached(id);void this.pump()
+      }).catch(e=>this.quarantine('旧 Session 活动状态写入失败：'+err(e)))
+    }
+    const stop=session.subscribe(onStop)
+    this.detachedActivity.set(id,{reference,stop})
+    onStop()
+  }
   private async fail(id:string,status:'failed'|'blocked'|'interrupted',detail:string):Promise<void>{
     this.setArmed(false)
     await this.write(q=>q.activeIds.includes(id)?updateActive(q,id,{status,detail}):q)
@@ -328,8 +359,14 @@ export class Coordinator {
       if(this.closed||!this.connected()||generation!==this.epoch)throw Error('扫描过程中连接已断开，请重新检查 Session')
       const row=snapshot.byId[id]
       if(!row||!row.running||row.origin==='subagent')continue
-      const old=this.queue().tasks.find(t=>t.sessionId===id)
-      if(old&&!['interrupted','running','starting'].includes(old.status))continue
+      const snapshotQueue=this.queue()
+      const old=snapshotQueue.tasks.find(t=>t.sessionId===id)
+      const historic=snapshotQueue.tasks.some(t=>t.attempts?.some(a=>a.sessionId===id))
+      if((old&&!['interrupted','running','starting'].includes(old.status))||(!old&&historic)){
+        await this.trackDetached(id,generation)
+        found++
+        continue
+      }
       if(old&&this.live.has(old.id))continue
       const workspaces=this.workspaces.list.getSnapshot().items
       const workspace=workspaces.find(w=>w.sessionIds.includes(id))

@@ -84,7 +84,7 @@ export function QueueBoard(props:BoardProps) {
     }catch(e){props.actions.error(message(e))}
     finally{setSubmitting(false)}
   }
-  const busy = q.activeIds.length > 0
+  const busy = q.activeIds.length+q.sessionActivity.length > 0
   return createPortal(<div className="gq-root" role="dialog" aria-modal="true" aria-label="DSH 任务队列">
     <header className="gq-head">
       <div><h1>DSH 任务队列</h1><span>跨工作区任务 · {q.tasks.filter(t=>t.status==='pending').length} 项待执行</span></div>
@@ -102,8 +102,8 @@ export function QueueBoard(props:BoardProps) {
     </header>
     <div className="gq-notes">
       {queueEnabled?'队列已启用：按并发上限派发任务。':'队列未获当前客户端启动授权：不会启动下一项；已有任务不会被中断。'}
-      {busy?` 当前有 ${q.activeIds.length} 项运行／观察任务，最大并发 ${q.maxConcurrent}。`:''}
-      {q.activeIds.length>q.maxConcurrent&&<div className="gq-error">发现的运行任务已超过并发上限；不会强制结束已有 Session，也不会派发新任务。</div>}
+      {busy?` 当前有 ${q.activeIds.length+q.sessionActivity.length} 项运行／观察任务，最大并发 ${q.maxConcurrent}。`:''}
+      {q.activeIds.length+q.sessionActivity.length>q.maxConcurrent&&<div className="gq-error">发现的运行任务已超过并发上限；不会强制结束已有 Session，也不会派发新任务。</div>}
       {blockers.length>0 && <div className="gq-error" role="alert">有 {blockers.length} 项异常任务尚未处理，已禁止启动后续任务。先查看旧 Session，明确选择重新排队或人工跳过。</div>}
       <div>目标模式以 DSH Goal 的 complete / blocked 为准；普通模式以已观察到的运行→空闲为准，不代表代码已通过人工验收。</div>
     </div>

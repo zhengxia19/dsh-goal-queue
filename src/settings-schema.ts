@@ -7,6 +7,7 @@ export const queueSchema = z.object({
     enabled: z.boolean().default(false),
     activeId: z.union([z.string(), z.const(null)]).default(null),
     activeIds: z.array(z.string()).default([]),
+    sessionActivity: z.array(z.string()).default([]),
     maxConcurrent: z.number().step(1).min(1).max(8).default(1),
     error: z.string().default(''),
     tasks: z.array(z.object({
@@ -25,5 +26,5 @@ export const queueSchema = z.object({
       })),z.const(undefined)]),
       createdAt: z.number(), updatedAt: z.number(),
     })).default([]),
-  }).default({ enabled: false, activeId: null, activeIds: [], maxConcurrent: 1, error: '', tasks: [] }).volatile(),
+  }).default({ enabled: false, activeId: null, activeIds: [], sessionActivity: [], maxConcurrent: 1, error: '', tasks: [] }).volatile(),
 })
