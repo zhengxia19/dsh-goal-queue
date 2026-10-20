@@ -210,3 +210,20 @@ test('T06: failed task with unknown original Session may not be blindly retried'
   assert.equal(x.host.value.queue.tasks[0]!.status,'failed')
   x.coordinator.dispose()
 })
+
+test('T09 RED: a completed Session reused by DPH occupies one observed slot',async()=>{
+  let q=add(add(EMPTY_QUEUE,input('history'),'h'),input('later'),'later')
+  q={...q,tasks:q.tasks.map(t=>t.id==='h'
+    ?{...t,status:'completed' as const,sessionId:'existing'}:t)}
+  const x=setup(q)
+  x.coordinator.start();await tick()
+  await x.coordinator.discover();await tick()
+  assert.deepEqual(x.host.value.queue.sessionActivity,['existing'])
+  await x.coordinator.enable(true);await tick()
+  assert.equal(x.created(),0)
+  x.ordinary.state.running=false;x.ordinary.emit();await tick()
+  assert.deepEqual(x.host.value.queue.sessionActivity,[])
+  assert.equal(x.created(),1)
+  assert.equal(x.host.value.queue.tasks[0]?.status,'completed')
+  x.coordinator.dispose()
+})
