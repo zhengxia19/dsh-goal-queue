@@ -143,7 +143,7 @@ export class Coordinator {
           await this.write(q=>releaseUnsubmittedClaim(q,task.id))
           break
         }
-        await this.dispatch(task)
+        await this.dispatch(task,authorization)
       }
     }catch(e){
       console.error('[goal-queue] unsafe dispatch',e)
@@ -164,9 +164,18 @@ export class Coordinator {
     held.subscriptions.push(session.projections.faceOf('goal').subscribe(()=>{void this.observe(id)}))
     return held
   }
-  private async dispatch(task:Task):Promise<void>{
+  private async dispatch(task:Task,authorization:number):Promise<void>{
     const generation=this.epoch
     let created=false,submitted=false
+    const revoked=()=>authorization!==this.controlIntent||!this.armed||!this.connected()
+    const abandon=async():Promise<boolean>=>{
+      if(generation!==this.epoch||this.closed){this.release(task.id);return true}
+      if(!revoked())return false
+      // Remote Session may exist. Preserve its ID and stop, never return it to pending.
+      await this.fail(task.id,'interrupted',
+        '暂停或连接状态已变更；新 Session 已创建但任务执行命令未提交，请检查原会话')
+      return true
+    }
     try{
       const workspace=this.workspaces.list.getSnapshot().items.find(w=>w.workspaceId===task.workspaceId)
       if(!workspace)throw Error('工作区已删除')
@@ -175,7 +184,7 @@ export class Coordinator {
       if(generation!==this.epoch||this.closed)return
       await this.write(q=>setSessionId(q,task.id,sessionId))
       const held=await this.hold(task.id,sessionId,generation)
-      if(generation!==this.epoch||this.closed){this.release(task.id);return}
+      if(await abandon())return
       // Optional tool-free auxiliary LLM title request. It never submits a user prompt
       // to the task Session; a title failure must not silently replay or cancel the task.
       if(task.generateTitle){
@@ -191,7 +200,7 @@ export class Coordinator {
             ?updateActive(q,task.id,{detail:'模型标题生成失败：'+err(e)+'；任务继续正常派发'}):q)
         }
       }
-      if(generation!==this.epoch||this.closed||!this.connected()){this.release(task.id);return}
+      if(await abandon())return
       if(task.goalMode){
         submitted=true
         const response=await held.session.command('/goal '+task.prompt.replace(/\s+/g,' ').trim())
