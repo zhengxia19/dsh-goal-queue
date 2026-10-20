@@ -164,3 +164,16 @@ test('T04 RED: concurrent resumeGoal requests must have exactly one command subm
   assert.equal(results.filter(r=>r.status==='rejected').length,1)
   x.coordinator.dispose()
 })
+
+test('T05 RED: blocked old Goal can be resumed in original Session',async()=>{
+  let q=add(EMPTY_QUEUE,{workspaceId:'ws',prompt:'Goal work',title:'',goalMode:true},'old')
+  q={...q,tasks:[{...q.tasks[0]!,sessionId:'existing',goalId:'goal-old',status:'blocked' as const}]}
+  const x=setup(q)
+  x.ordinary.state.running=false
+  x.ordinary.goal={goal:{id:'goal-old',objective:'Goal work',phase:'blocked'}}
+  x.coordinator.start();await tick()
+  await x.coordinator.resumeGoal('old');await tick()
+  assert.equal(x.ordinary.commands.filter(c=>c==='/goal resume').length,1)
+  assert.equal(x.host.value.queue.tasks[0]!.status,'running')
+  x.coordinator.dispose()
+})
