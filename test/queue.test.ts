@@ -129,6 +129,6 @@ test('T10 RED: queue exposes a consistent summary including unresolved tasks',as
   let q=add(add(EMPTY_QUEUE,input('A'),'a'),input('B'),'b')
   q={...q,sessionActivity:['old-s'],tasks:q.tasks.map(t=>t.id==='a'
     ?{...t,status:'blocked' as const}:t)}
-  const s=(summarize as (q:typeof q)=>{unresolved:number;running:number;pending:number})(q)
+  const s=(summarize as (queue:typeof EMPTY_QUEUE)=>{unresolved:number;running:number;pending:number})(q)
   assert.deepEqual(s,{unresolved:1,running:1,pending:1})
 })
