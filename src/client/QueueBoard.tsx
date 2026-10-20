@@ -8,8 +8,9 @@ import { DEFAULT_SETTINGS, UNRESOLVED, summarizeQueue, type Task } from '../queu
 import { MAX_TITLE_INPUT_CHARS } from '../title-policy.ts'
 import type { viewStore } from './store.ts'
 import type { Coordinator } from './coordinator.ts'
+import { filterTaskRows, type TaskFilter } from './queue-view.ts'
 
-type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open' | 'discover' | 'resumeGoal' | 'setConcurrency' | 'isAuthorized' | 'subscribeAuthorization'> & {refresh: () => Promise<void>}
+type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open' | 'discover' | 'resumeGoal' | 'setConcurrency' | 'isAuthorized' | 'subscribeAuthorization' | 'openAttempt'> & {refresh: () => Promise<void>}
 export type BoardProps = PropsStore<typeof viewStore> & PropsRuntime<'shell.overlay'> &
   PropsHooks<{queueSettings: QueueSettingsSource, workspaces: {
     getSnapshot():WorkspaceSnapshot;subscribe(listener:()=>void):()=>void
@@ -39,6 +40,8 @@ export function QueueBoard(props:BoardProps) {
   const [titleMaxChars,setTitleMaxChars] = useState(24)
   const [submitting,setSubmitting] = useState(false)
   const [discovering,setDiscovering] = useState(false)
+  const [filter,setFilter] = useState<TaskFilter>('current')
+  const [expanded,setExpanded] = useState<Record<string,boolean>>({})
   useEffect(()=>{
     if (!open) return
     const onKey = (e:KeyboardEvent)=>{if(e.key==='Escape')props.actions.close()}
@@ -91,6 +94,11 @@ export function QueueBoard(props:BoardProps) {
     finally{setSubmitting(false)}
   }
   const busy = q.activeIds.length+q.sessionActivity.length > 0
+  const visibleRows=filterTaskRows(q,filter)
+  const formatTime=(value:number)=>{
+    const date=new Date(value)
+    return Number.isNaN(date.getTime())?'未知':date.toLocaleString()
+  }
   return createPortal(<div className="gq-root" role="dialog" aria-modal="true" aria-label="DSH 任务队列">
     <header className="gq-head">
       <div><h1>DSH 任务队列</h1><span>跨工作区任务 · {summary.pending} 项待执行 · {summary.unresolved} 项异常</span></div>
@@ -115,8 +123,13 @@ export function QueueBoard(props:BoardProps) {
     </div>
     {q.error && <div className="gq-error" role="alert">{q.error}</div>}
     {error && <div className="gq-error" role="alert">操作失败：{error}</div>}
+    <nav className="gq-filters" aria-label="队列筛选">
+      {([['current','待执行与运行'],['abnormal','异常待处理'],['history','已完成与跳过'],['all','全部任务']] as const).map(([value,label])=>
+        <button key={value} type="button" aria-pressed={filter===value}
+          onClick={()=>setFilter(value)}>{label}</button>)}
+    </nav>
     <main className="gq-list">
-      {q.tasks.length===0?<div className="gq-empty">队列为空。添加任务并选择工作区，随后点击启动队列。</div>:q.tasks.map((task,i)=>{
+      {q.tasks.length===0?<div className="gq-empty">队列为空。添加任务并选择工作区，随后点击启动队列。</div>:visibleRows.length===0?<div className="gq-empty">此分类暂无任务。可切换筛选查看其他记录。</div>:visibleRows.map(({task,index:i})=>{
         const editable = task.status==='pending' && task.source!=='discovered'
         return <article className="gq-task" key={task.id} data-status={task.status}>
           <div className="gq-task-top">
@@ -129,6 +142,7 @@ export function QueueBoard(props:BoardProps) {
             <span className="gq-pill" data-status={task.status}>{labels[task.status]}</span>
           </div>
           <p className="gq-prompt">{task.prompt||'已纳入 DPH 现有 Session；无需重新提交指令'}</p>
+           <p className="gq-detail">创建 {formatTime(task.createdAt)} · 最近状态 {formatTime(task.updatedAt)}</p>
           {task.detail&&<p className="gq-detail">{task.detail}</p>}
            {task.titleError&&<p className="gq-detail" role="status">{task.titleError}</p>}
           <div className="gq-task-controls">
@@ -137,6 +151,8 @@ export function QueueBoard(props:BoardProps) {
             <button type="button" disabled={!editable} onClick={()=>editForm(task)}>编辑</button>
             <button type="button" disabled={q.activeIds.includes(task.id)||UNRESOLVED.includes(task.status)} onClick={()=>{void change(()=>props.operations.remove(task.id))}}>删除</button>
             {task.sessionId&&<button type="button" onClick={()=>{props.operations.open(task.id);props.actions.close()}}>打开 Session</button>}
+            {Boolean(task.attempts?.length)&&<button type="button" aria-expanded={Boolean(expanded[task.id])}
+              onClick={()=>setExpanded(s=>({...s,[task.id]:!s[task.id]}))}>执行记录 ({task.attempts?.length})</button>}
             {(task.status==='interrupted'||task.status==='blocked')&&task.goalMode&&task.sessionId&&<button type="button" onClick={()=>{if(!window.confirm('将在原 Session 内执行 /goal resume；请确认先前的执行已经停止。'))return;void change(()=>props.operations.resumeGoal(task.id))}}>继续原 Goal</button>}
             {UNRESOLVED.includes(task.status)&&Boolean(task.prompt.trim())&&<button type="button" onClick={()=>{
               if(!window.confirm('重新排队将创建新的 Session。请先确认旧 Session 已停止，防止重复修改代码。'))return
@@ -147,6 +163,14 @@ export function QueueBoard(props:BoardProps) {
               void change(()=>props.operations.skip(task.id))
             }}>人工跳过</button>}
           </div>
+          {expanded[task.id]&&<div className="gq-history" aria-label="历次执行记录">
+            {task.attempts?.map((attempt,index)=><div className="gq-history-row" key={attempt.id}>
+              <span>第 {index+1} 次 · {labels[attempt.status]} · Session：{attempt.sessionId||'未知'} · 记录 {formatTime(attempt.updatedAt)}</span>
+              {attempt.sessionId&&<button type="button" onClick={()=>{
+                props.operations.openAttempt(task.id,attempt.id);props.actions.close()
+              }}>打开历史 Session</button>}
+            </div>)}
+          </div>}
         </article>
       })}
     </main>

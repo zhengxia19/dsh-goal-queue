@@ -47,6 +47,7 @@ export function apply(ctx: Context): void {
         resumeGoal: coordinator.resumeGoal.bind(coordinator),
         setConcurrency: coordinator.setConcurrency.bind(coordinator),
         open: coordinator.open.bind(coordinator),
+        openAttempt: coordinator.openAttempt.bind(coordinator),
         isAuthorized: coordinator.isAuthorized.bind(coordinator),
         subscribeAuthorization: coordinator.subscribeAuthorization.bind(coordinator),
       },

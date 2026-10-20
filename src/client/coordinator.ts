@@ -145,6 +145,10 @@ export class Coordinator {
     const sessionId=this.queue().tasks.find(t=>t.id===id)?.sessionId
     if(sessionId)this.openSession?.(sessionId as SessionId)
   }
+  openAttempt(id:string,attemptId:string):void{
+    const attempt=this.queue().tasks.find(t=>t.id===id)?.attempts?.find(a=>a.id===attemptId)
+    if(attempt?.sessionId)this.openSession?.(attempt.sessionId as SessionId)
+  }
   async enable(enabled:boolean):Promise<void>{
     const intent=++this.controlIntent
     if(!enabled)this.setArmed(false)
