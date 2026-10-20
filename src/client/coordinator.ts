@@ -27,6 +27,17 @@ export class Coordinator {
   private discovered=false
   private scanning:Promise<number>|undefined
   private armed=false
+  private readonly authorizationListeners=new Set<()=>void>()
+  isAuthorized():boolean{return this.armed}
+  subscribeAuthorization(listener:()=>void):()=>void{
+    this.authorizationListeners.add(listener)
+    return ()=>{this.authorizationListeners.delete(listener)}
+  }
+  private setArmed(value:boolean):void{
+    if(this.armed===value)return
+    this.armed=value
+    for(const listener of this.authorizationListeners)listener()
+  }
   private controlIntent=0
   private epoch=0
   private readonly disposers:(()=>void)[]=[]
@@ -44,6 +55,10 @@ export class Coordinator {
   }
   start():void {
     this.disposers.push(this.settings.subscribe(()=>{
+      if(this.settings.getSnapshot().status!=='ready'){
+        this.setArmed(false)
+        this.controlIntent++
+      }
       void this.pump()
       if(this.settings.getSnapshot().status==='ready')
         for(const id of this.live.keys())void this.observe(id)
@@ -56,11 +71,11 @@ export class Coordinator {
   }
   async connectionReset():Promise<void>{
     if(this.closed)return
-    this.armed=false;this.controlIntent++;this.epoch++;this.releaseAll()
+    this.setArmed(false);this.controlIntent++;this.epoch++;this.releaseAll()
     this.booted=false;this.discovered=false;void this.pump()
   }
   dispose():void{
-    this.closed=true;this.armed=false;this.controlIntent++;this.epoch++
+    this.closed=true;this.setArmed(false);this.controlIntent++;this.epoch++
     this.releaseAll();this.discovered=false;for(const stop of this.disposers.splice(0))stop()
   }
   private queue():QueueState {
@@ -80,7 +95,7 @@ export class Coordinator {
     return op
   }
   private quarantine(reason:string):void{
-    this.armed=false;this.controlIntent++;this.booted=false
+    this.setArmed(false);this.controlIntent++;this.booted=false
     this.settings.failClosed(reason)
     this.releaseAll()
   }
@@ -101,7 +116,7 @@ export class Coordinator {
   }
   async enable(enabled:boolean):Promise<void>{
     const intent=++this.controlIntent
-    if(!enabled)this.armed=false
+    if(!enabled)this.setArmed(false)
     const generation=this.epoch
     await this.write(q=>{
       if(intent!==this.controlIntent)return q
@@ -114,7 +129,7 @@ export class Coordinator {
     if(enabled&&intent===this.controlIntent){
       if(this.closed||generation!==this.epoch||!this.connected()||!this.booted)
         throw Error('连接已切换；请重新手工启用')
-      this.armed=true;void this.pump()
+      this.setArmed(true);void this.pump()
     }
   }
   private async pump():Promise<void>{
@@ -124,7 +139,7 @@ export class Coordinator {
     try{
       if(this.settings.getSnapshot().status!=='ready')return
       if(!this.booted){
-        this.armed=false
+        this.setArmed(false)
         this.discovered=false
         await this.write(q=>recover(q,'程序启动或连接切换；检查旧 Session 后手工激活队列'))
         this.booted=true
@@ -215,7 +230,7 @@ export class Coordinator {
       await this.write(q=>updateActive(q,task.id,{status:'running'}))
       await this.observe(task.id)
     }catch(e){
-      this.armed=false
+      this.setArmed(false)
       if(generation===this.epoch&&!this.closed){
         try{await this.fail(task.id,created?'interrupted':'failed',
           err(e)+'；'+(created?(submitted?'命令可能已提交':'Session 已创建'):'Session 创建未确认')+'，请手工核实')}
@@ -230,7 +245,7 @@ export class Coordinator {
   }
   private releaseAll():void{for(const id of [...this.live.keys()])this.release(id)}
   private async fail(id:string,status:'failed'|'blocked'|'interrupted',detail:string):Promise<void>{
-    this.armed=false
+    this.setArmed(false)
     await this.write(q=>q.activeIds.includes(id)?updateActive(q,id,{status,detail}):q)
     this.release(id)
   }
@@ -250,7 +265,7 @@ export class Coordinator {
         this.release(id);void this.pump()
       }
     }catch(e){
-      this.armed=false
+      this.setArmed(false)
       if(this.live.has(id)){
         try{await this.fail(id,'interrupted',err(e))}
         catch(p){this.quarantine('Session 状态写入失败：'+err(p))}

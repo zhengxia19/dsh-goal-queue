@@ -1,5 +1,5 @@
 /** Workspace-aware, reorderable single-lane queue. No second Session/Goal authority. */
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, useSyncExternalStore, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { PropsStore, PropsHooks, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { QueueSettingsSource } from './settings.ts'
@@ -8,7 +8,7 @@ import { DEFAULT_SETTINGS, UNRESOLVED, type Task } from '../queue.ts'
 import type { viewStore } from './store.ts'
 import type { Coordinator } from './coordinator.ts'
 
-type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open' | 'discover' | 'resumeGoal' | 'setConcurrency'> & {refresh: () => Promise<void>}
+type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open' | 'discover' | 'resumeGoal' | 'setConcurrency' | 'isAuthorized' | 'subscribeAuthorization'> & {refresh: () => Promise<void>}
 export type BoardProps = PropsStore<typeof viewStore> & PropsRuntime<'shell.overlay'> &
   PropsHooks<{queueSettings: QueueSettingsSource, workspaces: {
     getSnapshot():WorkspaceSnapshot;subscribe(listener:()=>void):()=>void
@@ -25,6 +25,8 @@ export function QueueBoard(props:BoardProps) {
   const settings = loadingState.value ?? DEFAULT_SETTINGS
   const workspaces = props.useWorkspaces(s=>s)
   const q = settings.queue
+  const authorized=useSyncExternalStore(props.operations.subscribeAuthorization, props.operations.isAuthorized)
+  const queueEnabled=q.enabled && authorized
   const blockers = q.tasks.filter(t => UNRESOLVED.includes(t.status))
   const [editing,setEditing] = useState<string|null>(null)
   const [title,setTitle] = useState('')
@@ -92,14 +94,14 @@ export function QueueBoard(props:BoardProps) {
         <label>最大并发 <select aria-label="最大并发任务数" value={q.maxConcurrent} onChange={e=>{void change(()=>props.operations.setConcurrency(Number(e.target.value)))}}>
           {Array.from({length:8},(_,i)=>i+1).map(n=><option key={n} value={n}>{n}</option>)}
         </select></label>
-        <button type="button" className={q.enabled?'gq-warn':'gq-primary'} disabled={!q.enabled && (blockers.length>0 || discovering)} onClick={()=>{void change(()=>props.operations.enable(!q.enabled))}}>
-          {q.enabled?'暂停队列':'启动队列'}
+        <button type="button" className={queueEnabled?'gq-warn':'gq-primary'} disabled={!queueEnabled && (blockers.length>0 || discovering)} onClick={()=>{void change(()=>props.operations.enable(!queueEnabled))}}>
+          {queueEnabled?'暂停队列':'启动队列'}
         </button>
         <button type="button" onClick={()=>props.actions.close()}>关闭</button>
       </div>
     </header>
     <div className="gq-notes">
-      {q.enabled?'队列已启用：按并发上限派发任务。':'队列已暂停：不会启动下一项；已有任务不会被中断。'}
+      {queueEnabled?'队列已启用：按并发上限派发任务。':'队列未获当前客户端启动授权：不会启动下一项；已有任务不会被中断。'}
       {busy?` 当前有 ${q.activeIds.length} 项运行／观察任务，最大并发 ${q.maxConcurrent}。`:''}
       {q.activeIds.length>q.maxConcurrent&&<div className="gq-error">发现的运行任务已超过并发上限；不会强制结束已有 Session，也不会派发新任务。</div>}
       {blockers.length>0 && <div className="gq-error" role="alert">有 {blockers.length} 项异常任务尚未处理，已禁止启动后续任务。先查看旧 Session，明确选择重新排队或人工跳过。</div>}
