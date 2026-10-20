@@ -168,6 +168,18 @@ export function updateTitle(q:QueueState,id:string,title:string):QueueState{
   if(!title.trim())return q
   return {...q,tasks:q.tasks.map(t=>t.id===id?{...t,title:title.trim(),updatedAt:Date.now()}:t)}
 }
+/** Atomically reserve the original Session for exactly one explicit Goal resume. */
+export function claimGoalResume(q:QueueState,id:string,goalId:string,now=Date.now()):QueueState{
+  const task=q.tasks.find(t=>t.id===id)
+  if(!task||task.status!=='interrupted'||!task.goalMode||!task.sessionId)
+    throw Error('旧 Goal 状态已改变或不能恢复，请刷新')
+  if(task.goalId&&task.goalId!==goalId)throw Error('原 Goal ID 已改变，拒绝恢复')
+  if(q.activeIds.length>=q.maxConcurrent)throw Error('当前并发名额已满')
+  if(q.activeIds.includes(id))throw Error('该 Goal 已处于恢复过程')
+  return withActive({...q,tasks:q.tasks.map(t=>t.id===id
+    ?{...t,status:'starting',goalId,updatedAt:now,detail:'旧 Goal 恢复命令准备中'}:t)},
+    [...q.activeIds,id])
+}
 export function retry(q:QueueState,id:string):QueueState{
   if(q.activeIds.includes(id))throw Error('不能重新派发仍在运行的任务')
   const task=q.tasks.find(t=>t.id===id)

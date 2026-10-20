@@ -5,7 +5,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { QueueSettingsSource } from './settings.ts'
 import { observeTask } from './observe-task.ts'
 import { UNRESOLVED,add,adopt,claim,decode,edit,move,next,recover,remove,retry,
-  setConcurrency,setSessionId,skip,updateActive,updateTitle,releaseUnsubmittedClaim,type QueueState,type Task,type TaskInput } from '../queue.ts'
+  setConcurrency,setSessionId,skip,updateActive,updateTitle,releaseUnsubmittedClaim,claimGoalResume,type QueueState,type Task,type TaskInput } from '../queue.ts'
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
   interface SessionReferenceSourceMap { goalQueue: unknown }
 }
@@ -354,30 +354,35 @@ export class Coordinator {
     const task=this.queue().tasks.find(t=>t.id===id)
     if(!task||task.status!=='interrupted'||!task.goalMode||!task.sessionId)
       throw Error('只有已中断且保留原 Session 的 Goal 可以激活')
-    if(this.queue().activeIds.length>=this.queue().maxConcurrent)
-      throw Error('当前并发名额已满')
+    const generation=this.epoch
     const ref=this.sessions.retain(task.sessionId as SessionId,{source:'goalQueue'})
+    let claimed=false
     try{
       await ref.ready
+      if(generation!==this.epoch||!this.connected())throw Error('连接发生切换，拒绝恢复')
       const raw=ref.binding.session.projections.faceOf('goal').getSnapshot()
       const goal=raw&&typeof raw==='object'&&'goal' in raw
         ?(raw as {goal?:{id:string;phase:string}}).goal:undefined
       if(!goal||!['active','paused','blocked'].includes(goal.phase))
         throw Error('原 Session 中没有可恢复的 Goal')
+      if(task.goalId&&task.goalId!==goal.id)throw Error('原 Goal ID 已改变，拒绝恢复')
       if(ref.binding.session.getSnapshot().running)
-        throw Error('原 Session 正在运行，请使用“刷新运行任务”重新关联，不要重复恢复')
-      // Persist ownership before command; an uncertain command response prevents second dispatch.
-      await this.write(q=>adopt(q,{
-        sessionId:task.sessionId!,workspaceId:task.workspaceId,title:task.title,
-        goalMode:true,goalId:goal.id,prompt:task.prompt
-      },task.id))
-      await this.hold(id,task.sessionId as SessionId)
+        throw Error('原 Session 正在运行，请刷新运行任务，勿重复恢复')
+      await this.write(q=>claimGoalResume(q,id,goal.id))
+      claimed=true
+      if(generation!==this.epoch||!this.connected())throw Error('连接切换，恢复已隔离')
+      await this.hold(id,task.sessionId as SessionId,generation)
       const response=await ref.binding.session.command('/goal resume')
       if(!response.ok||!response.value.matched)throw Error('Goal 恢复命令未被接受')
+      await this.write(q=>updateActive(q,id,{status:'running',goalId:goal.id}))
       void this.observe(id)
     }catch(e){
-      try{await this.fail(id,'interrupted','恢复状态不确定：'+err(e))}
-      catch(p){this.quarantine('无法保存 Goal 恢复异常：'+err(p))}
+      // A competing call that failed to obtain ownership must not interrupt
+      // the first request's already claimed Session.
+      if(claimed){
+        try{await this.fail(id,'interrupted','恢复状态不确定：'+err(e))}
+        catch(p){this.quarantine('无法保存 Goal 恢复异常：'+err(p))}
+      }
       throw e
     }finally{ref.release()}
   }
