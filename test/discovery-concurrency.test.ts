@@ -177,3 +177,15 @@ test('T05 RED: blocked old Goal can be resumed in original Session',async()=>{
   assert.equal(x.host.value.queue.tasks[0]!.status,'running')
   x.coordinator.dispose()
 })
+
+test('T06 RED: retry/skip must reject original Session still running',async()=>{
+  let q=add(EMPTY_QUEUE,{workspaceId:'ws',prompt:'Goal work',title:'',goalMode:true},'old')
+  q={...q,tasks:[{...q.tasks[0]!,sessionId:'existing',status:'interrupted' as const}]}
+  const x=setup(q)
+  x.ordinary.state.running=true
+  x.coordinator.start();await tick()
+  await assert.rejects(x.coordinator.retry('old'),/运行|停止/)
+  await assert.rejects(x.coordinator.skip('old'),/运行|停止/)
+  assert.equal(x.host.value.queue.tasks[0]!.status,'interrupted')
+  x.coordinator.dispose()
+})
