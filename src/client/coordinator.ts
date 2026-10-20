@@ -5,7 +5,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { QueueSettingsSource } from './settings.ts'
 import { observeTask } from './observe-task.ts'
 import { UNRESOLVED,add,adopt,claim,decode,edit,move,next,recover,remove,retry,
-  setConcurrency,setSessionId,skip,updateActive,updateTitle,type QueueState,type Task,type TaskInput } from '../queue.ts'
+  setConcurrency,setSessionId,skip,updateActive,updateTitle,releaseUnsubmittedClaim,type QueueState,type Task,type TaskInput } from '../queue.ts'
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
   interface SessionReferenceSourceMap { goalQueue: unknown }
 }
@@ -136,8 +136,13 @@ export class Coordinator {
         const task=next(this.queue())
         if(!task)break
         const generation=this.epoch
+        const authorization=this.controlIntent
         await this.write(q=>claim(q,task.id))
-        if(generation!==this.epoch||this.closed||!this.armed||!this.connected())break
+        if(generation!==this.epoch||this.closed||!this.armed||!this.connected()
+          ||authorization!==this.controlIntent){
+          await this.write(q=>releaseUnsubmittedClaim(q,task.id))
+          break
+        }
         await this.dispatch(task)
       }
     }catch(e){

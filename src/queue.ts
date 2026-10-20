@@ -125,6 +125,13 @@ export function updateActive(q:QueueState,id:string,patch:Partial<Task>,now=Date
     tasks:q.tasks.map(t=>t.id===id?{...t,...rest,...(status?{status}:{}),updatedAt:now}:t)
   },ids)
 }
+/** Release a reserved slot only when no Session was created and no command submitted. */
+export function releaseUnsubmittedClaim(q:QueueState,id:string):QueueState{
+  const task=q.tasks.find(t=>t.id===id)
+  if(!task||task.status!=='starting'||task.sessionId||!q.activeIds.includes(id))return q
+  return withActive({...q,tasks:q.tasks.map(t=>t.id===id
+    ?{...t,status:'pending',updatedAt:Date.now()}:t)},q.activeIds.filter(x=>x!==id))
+}
 export function setSessionId(q:QueueState,id:string,sessionId:string):QueueState{
   if(!q.activeIds.includes(id))throw Error('当前任务执行权已失效')
   if(q.tasks.some(t=>t.id!==id&&t.sessionId===sessionId))throw Error('Session 已归属另一任务')
