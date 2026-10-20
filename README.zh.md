@@ -1,6 +1,6 @@
 # DSH 任务队列插件 — DPH Desktop V0.2.1-rc.2
 
-> 插件版本：**0.3.1 源码预览版**。当前基于 DSH 官方公开 Client Session API。GitHub CI 的构建、类型检查与模拟测试不代替 Windows DPH Desktop 端到端验收。请在隔离的 Desktop Profile / 测试工作区先行试用。
+> 插件版本：**0.3.2-preview.0 源码预览版**。当前基于 DSH 官方公开 Client Session API。GitHub CI 的构建、类型检查与模拟测试不代替 Windows DPH Desktop 端到端验收。请在隔离的 Desktop Profile / 测试工作区先行试用。
 
 ## 功能
 
@@ -32,7 +32,7 @@
 
 ### 旧版队列迁移
 
-0.2.x 的持久队列数据使用 `version=1`、`activeId`。0.3.1 **仍接受旧版本**，在读取时派生 `activeIds` 与默认并发数 1，保留旧任务 ID、顺序、Session ID 和执行历史。首次保存会一起写入新的 `activeIds`、`maxConcurrent`、`source`；可选的 `generateTitle`/`titleMaxChars` 没有的旧任务默认为不启用辅助标题。解析失败必须报错，不可覆盖成空队列。新版本执行并保存之后，不应直接降级到旧 0.2.x 插件。
+0.2.x 的持久队列数据使用 `version=1`、`activeId`。0.3.2-preview.0 **仍接受旧版本**，在读取时派生 `activeIds` 与默认并发数 1，保留旧任务 ID、顺序、Session ID 和执行历史。首次保存会一起写入新的 `activeIds`、`maxConcurrent`、`source`；可选的 `generateTitle`/`titleMaxChars` 没有的旧任务默认为不启用辅助标题。解析失败必须报错，不可覆盖成空队列。新版本执行并保存之后，不应直接降级到旧 0.2.x 插件。
 
 ### 模型标题生成：选项、成本与边界
 
@@ -80,4 +80,18 @@ npm run build
 - [模型标题功能复审](docs/模型标题生成_复审_2026-10-19.md)
 - [实机验收清单](docs/DPH_V0.2.1-rc.2_实机验收清单.md)
 
-此项目暂未在 npm 发布（`private: true`），也尚未通过真实 Windows DPH Desktop V0.2.1-rc.2 的安装和运行验收，不能宣称正式发布。
+此项目仍未在 npm 发布（`private: true`），也尚未通过真实 Windows DPH Desktop V0.2.1-rc.2 的安装和运行验收，不能宣称正式发布。
+
+## v0.3.2-preview.0｜执行安全与历史追溯（2026-10-20）
+
+本变更在隔离分支完成源码与 GitHub Actions 自动化验证，**没有完成 Windows DPH Desktop 实机验收**；请勿据此宣称生产环境稳定。
+
+- **暂停与故障关闭**：对 claim、Session 创建、标题请求三个阶段收紧一次性人工派发授权；未创建 Session 的占位能安全撤销，已创建 Session 但未提交指令时保留 Session ID 并停止，Host 配置写入/读取失信后必须再次手动启动。
+- **旧 Goal 恢复**：对同一 Goal 一次只允许一个恢复请求，增加 blocked/paused 恢复入口；重试或跳过之前读取原 Session 当前运行状态，原 Session 在运行时拒绝处置；无 Session ID 时禁止盲目重试。
+- **多行目标**：原生 `/goal` 不再压缩换行与缩进。依据 DSH `dsh-v0.2.1-rc.2` 官方命令解析源码确认该版本保留命令输入内部空白。
+- **历史与占用**：任务新增可选的 `attempts` 历史记录；旧 `version=1` 可兼容读取并按需生成首次记录。重试不再丢失旧 Session ID。另以 `sessionActivity` 独立统计重新运行的旧 Session，不把已经完成的任务重新标为运行中。仅统计本 Client 已发现的活动。
+- **管理界面**：侧边栏显示待处理异常数；任务可以按运行/待执行、异常、历史、全部筛选；历史记录可查看原 Session。可选 AI 标题题词超过 8000 UTF-16 代码单元时在表单提示，独立的 `titleError` 保留标题失败原因。
+- **恢复限制**：如果旧 Session 无法访问，队列不会猜测其安全停止；跨 Client 仍不提供全局锁。UI 关闭不会暂停已获授权的队列；退出 Client 后不负责后台派发。队列启用后新增任务可能立即执行，本版不擅自变更这一既有语义。
+- **升级与回退**：保留 `version=1`、`activeId` 兼容输入，新增字段包括 `attempts`、`sessionActivity`、`titleError`。首次新版本保存前备份 Desktop Profile；保存新结构后不保证旧插件可以直接安全降级。任何格式损坏一律拒绝清空重建。
+
+实施任务顺序、自动化失败/修复对照和未验收事项见 [变更总调度](docs/change-plan-2026-10-20/00-总调度与验收.md)及[实施证据](docs/change-plan-2026-10-20/实施证据与未完成项.md)。

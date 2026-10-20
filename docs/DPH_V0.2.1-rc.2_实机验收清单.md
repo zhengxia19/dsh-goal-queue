@@ -64,3 +64,18 @@
 - [ ] TT08：观察新增标题模型请求的耗时及 Token，明确它额外占用模型推理资源；真实 DPH Profile 不应被替换或错误写入密钥。
 
 **实际 Windows DPH Desktop V0.2.1-rc.2 的验收记录必须保留，不可用模拟测试或 GitHub CI 成功代替。**
+
+## v0.3.2-preview.0｜新增实机验收 W01–W08（全部待执行）
+
+> Windows DPH Desktop 0.2.1-rc.2、独立 Profile 与至少两个隔离工作区（一个中文路径）均必须真实运行。下列不能用 Linux CI/MOCK 代替，须保存 Session ID、Host 日志、操作时间和独立复核签名。
+
+- [ ] **W01 授权与 Pause 竞态**：分别在 claim、Session 创建、辅助标题请求中暂停，核查 0 个迟到的执行 Prompt/Goal、未创建无幽灵占位、已创建保留 Session ID。
+- [ ] **W02 Host CAS 故障**：已启动时模拟写失败/回包丢失，随后恢复读取，确认没有再次手动授权前创建数为 0。
+- [ ] **W03 同 Goal 连点恢复**：两次并发点击旧 Goal 恢复，同一 Session 最多一个 `/goal resume`，另一调用明确拒绝。
+- [ ] **W04 原 Goal blocked/paused**：当前 Session idle、Goal ID 匹配时可继续原 Session；正在运行或 Goal 不匹配时拒绝。
+- [ ] **W05 原 Session 核实与历史**：运行中重试/跳过被拒绝；原 Session idle 后可人工重试；多次执行历史 Session ID 可查看。
+- [ ] **W06 Session 复用并发**：已完成 Session 重新在 DSH 中运行，占单独一个槽位，重复扫描不双计数，停止后释放，原历史状态不变。
+- [ ] **W07 多行 Goal 输入**：中文 Markdown、空行、代码块、反斜线，在 Host 原生 Goal objective 中结构保真，并保持 Goal ID/phase/idle 判据。
+- [ ] **W08 标题与历史 UI**：8/24/80 字符、长题词超限、模型不可用、标题诊断保留，以及 100+ 历史记录筛选、导航与无效 Session 的可访问性。
+
+**本追加项状态：全部未执行。T13 与原 A01–A15、V3、TT 均保持打开；不可使用 CI 绿灯标记实机通过。**
