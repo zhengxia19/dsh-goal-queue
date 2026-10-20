@@ -30,10 +30,10 @@ class MockSettings {
   subscribe=(fn:()=>void)=>{this.listeners.add(fn);return()=>{this.listeners.delete(fn)}}
   async set(_key:string, queue:typeof EMPTY_QUEUE){if(this.failOnStatus && queue.tasks.some(t=>t.status===this.failOnStatus)) throw Error('模拟状态写入失败');this.value={version:1,queue};for(const listener of this.listeners)listener()}
 }
-function system(settings:MockSettings, options: {onCreate?:()=>Promise<void>} = {}){
+function system(settings:MockSettings, options: {onCreate?:()=>Promise<void>;onFace?:(face:MockFace)=>void} = {}){
   const faces:MockFace[]=[]
   const sessions={
-    async create(){faces.push(new MockFace());await options.onCreate?.();return `session-${faces.length}`},
+    async create(){const face=new MockFace();options.onFace?.(face);faces.push(face);await options.onCreate?.();return `session-${faces.length}`},
     binding(id:string){return {session:faces[Number(id.slice(8))-1]}},
     retain(id:string){const face=faces[Number(id.slice(8))-1];return {binding:{session:face},ready:Promise.resolve({session:face}),release(){}}},
   }
@@ -164,13 +164,18 @@ test('T02 RED: pause while Session.create is pending must not submit a Goal',asy
 })
 test('T02 RED: pause while optional title call is pending must not submit Goal',async()=>{
   const q=add(EMPTY_QUEUE,{...item('titled'),generateTitle:true},'d')
-  const settings=new MockSettings(q),{coordinator,faces}=system(settings)
-  coordinator.start();await pause()
-  // Install a hold at the first created face before dispatch reaches the title command.
-  const originalCreate=()=>{}
-  void originalCreate
-  // Session command resolves asynchronously; wait until the title call is observed.
-  await coordinator.enable(true);await pause()
-  assert.equal(faces[0]!.calls[0]?.startsWith('/goal-queue-title'),true)
+  const settings=new MockSettings(q)
+  let unblock!:()=>void, entered!:()=>void
+  const gate=new Promise<void>(r=>{unblock=r})
+  const starting=new Promise<void>(r=>{entered=r})
+  const {coordinator,faces}=system(settings,{onFace:face=>{
+    face.waitForTitle=async()=>{entered();await gate}
+  }})
+  coordinator.start();await pause();await coordinator.enable(true);await starting
+  await coordinator.enable(false)
+  unblock();await pause()
+  assert.equal(faces.length,1)
+  assert.equal(faces[0]!.calls.filter(x=>x.startsWith('/goal ')).length,0)
+  assert.equal(settings.value.queue.tasks[0]!.status,'interrupted')
   coordinator.dispose()
 })
