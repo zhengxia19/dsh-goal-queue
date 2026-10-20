@@ -189,3 +189,24 @@ test('T06 RED: retry/skip must reject original Session still running',async()=>{
   assert.equal(x.host.value.queue.tasks[0]!.status,'interrupted')
   x.coordinator.dispose()
 })
+
+test('T06: idle original Session may be manually retried and retains no running ownership',async()=>{
+  let q=add(EMPTY_QUEUE,{workspaceId:'ws',prompt:'Goal work',title:'',goalMode:true},'old')
+  q={...q,tasks:[{...q.tasks[0]!,sessionId:'existing',status:'interrupted' as const}]}
+  const x=setup(q)
+  x.ordinary.state.running=false
+  x.coordinator.start();await tick()
+  await x.coordinator.retry('old')
+  assert.equal(x.host.value.queue.tasks[0]!.status,'pending')
+  assert.equal(x.host.value.queue.activeIds.length,0)
+  x.coordinator.dispose()
+})
+test('T06: failed task with unknown original Session may not be blindly retried',async()=>{
+  let q=add(EMPTY_QUEUE,{workspaceId:'ws',prompt:'Goal work',title:'',goalMode:true},'old')
+  q={...q,tasks:[{...q.tasks[0]!,status:'failed' as const}]}
+  const x=setup(q)
+  x.coordinator.start();await tick()
+  await assert.rejects(x.coordinator.retry('old'),/Session ID 缺失/)
+  assert.equal(x.host.value.queue.tasks[0]!.status,'failed')
+  x.coordinator.dispose()
+})
