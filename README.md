@@ -1,6 +1,6 @@
 # DSH Goal Queue — Desktop native multi-session scheduler
 
-**Plugin v0.3.1 source preview**, targeting DPH / DeepSeek Harness Desktop **V0.2.1-rc.2**. Real Windows Desktop installation and agent end-to-end execution are **not yet accepted**; CI only validates mocked Session behavior and static packaging.
+**Plugin v0.3.2-preview.0 source preview**, targeting DPH / DeepSeek Harness Desktop **V0.2.1-rc.2**. Real Windows Desktop installation and agent end-to-end execution are **not yet accepted**; CI only validates mocked Session behavior and static packaging.
 
 See **[Chinese usage guide](README.zh.md)** for operating instructions, installation cautions, recovery paths and data migration.
 
@@ -44,3 +44,14 @@ Install through the actual DPH Desktop Profile's supported plugin mechanism; bui
 - [AI title extension review](docs/模型标题生成_复审_2026-10-19.md)
 - [Desktop E2E checklist](docs/DPH_V0.2.1-rc.2_实机验收清单.md)
 - [Development invariants](AGENTS.md)
+
+## v0.3.2-preview.0 changes (not Windows-accepted)
+
+- Fix Pause/Claim, post-create and optional-title races. Unknown Host persistence revokes Client dispatch authorization; a successful refresh never re-arms the queue.
+- Serialize explicit old-Goal resume; permit resumable blocked Goals in the original Session; reject retry/skip when the original Host Session is still active.
+- Preserve multiline Goal objectives using the official pinned command grammar.
+- Keep per-task `attempts` (legacy version-1 compatible); track reuse of completed Sessions via separate `sessionActivity` without rewriting completed history.
+- Show unresolved counts, title-input limits, persistent `titleError`, task filters and historical Session navigation.
+- This remains **Client-scoped concurrency**, not a global Host lock. Windows Desktop 0.2.1-rc.2 installation/behavior and independent acceptance remain pending. Do not downgrade after new snapshots have been saved without a backup.
+
+[Ordered tasks and Red→Green evidence](docs/change-plan-2026-10-20/00-总调度与验收.md).

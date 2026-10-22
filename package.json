@@ -1,6 +1,6 @@
 {
   "name": "dsh-goal-queue",
-  "version": "0.3.1",
+  "version": "0.3.2-preview.0",
   "private": true,
   "description": "Native multi-session task queue with optional tool-free AI titles for DPH v0.2.1-rc.2",
   "type": "module",

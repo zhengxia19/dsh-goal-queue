@@ -12,11 +12,12 @@ class MockFace {
   goal: {goal:{id:string,objective:string,phase:string}} | null=null
   calls:string[]=[]
   rejectTitle=false
+  waitForTitle?: () => Promise<void>
   projections={faceOf:(key:string)=>({getSnapshot:()=>key==='modelSelection'?{next:TEST_MODEL}:this.goal,subscribe:(fn:()=>void)=>{this.goalListeners.add(fn);return()=>{this.goalListeners.delete(fn)}}})}
   getSnapshot=()=>this.state
   subscribe=(fn:()=>void)=>{this.listeners.add(fn);return()=>{this.listeners.delete(fn)}}
   emit(){for(const fn of this.listeners)fn();for(const fn of this.goalListeners)fn()}
-  command=async(line:string)=>{this.calls.push(line);if(line.startsWith('/goal-queue-title '))return {ok:true,value:{matched:!this.rejectTitle}};this.goal={goal:{id:'goal-'+line,objective:line.slice(6),phase:'active'}};this.emit();return {ok:true,value:{matched:true}}}
+  command=async(line:string)=>{this.calls.push(line);if(line.startsWith('/goal-queue-title ')){await this.waitForTitle?.();return {ok:true,value:{matched:!this.rejectTitle}}};this.goal={goal:{id:'goal-'+line,objective:line.slice(6),phase:'active'}};this.emit();return {ok:true,value:{matched:true}}}
   prompt=async()=>{this.calls.push('prompt');this.state.running=true;this.emit();return {ok:true,value:{accepted:true}}}
   rename=async()=>({ok:true})
 }
@@ -30,10 +31,10 @@ class MockSettings {
   subscribe=(fn:()=>void)=>{this.listeners.add(fn);return()=>{this.listeners.delete(fn)}}
   async set(_key:string, queue:typeof EMPTY_QUEUE){if(this.failOnStatus && queue.tasks.some(t=>t.status===this.failOnStatus)) throw Error('模拟状态写入失败');this.value={version:1,queue};for(const listener of this.listeners)listener()}
 }
-function system(settings:MockSettings){
+function system(settings:MockSettings, options: {onCreate?:()=>Promise<void>;onFace?:(face:MockFace)=>void} = {}){
   const faces:MockFace[]=[]
   const sessions={
-    async create(){faces.push(new MockFace());return `session-${faces.length}`},
+    async create(){const face=new MockFace();options.onFace?.(face);faces.push(face);await options.onCreate?.();return `session-${faces.length}`},
     binding(id:string){return {session:faces[Number(id.slice(8))-1]}},
     retain(id:string){const face=faces[Number(id.slice(8))-1];return {binding:{session:face},ready:Promise.resolve({session:face}),release(){}}},
   }
@@ -143,5 +144,66 @@ test('AI title opt-out preserves ordinary submission, without title model reques
   const settings=new MockSettings(q),{faces,coordinator}=system(settings)
   coordinator.start();await pause();await coordinator.enable(true);await pause()
   assert.deepEqual(faces[0]!.calls,['prompt'])
+  coordinator.dispose()
+})
+
+test('T02 RED: pause while Session.create is pending must not submit a Goal',async()=>{
+  const q=add(EMPTY_QUEUE,item('delayed'),'d')
+  const settings=new MockSettings(q)
+  let unblock!:()=>void, entered!:()=>void
+  const gate=new Promise<void>(r=>{unblock=r})
+  const starting=new Promise<void>(r=>{entered=r})
+  const {coordinator,faces}=system(settings,{onCreate:async()=>{entered();await gate}})
+  coordinator.start();await pause();await coordinator.enable(true);await starting
+  await coordinator.enable(false)
+  unblock();await pause()
+  assert.equal(faces.length,1)
+  assert.equal(faces[0]!.calls.length,0)
+  assert.equal(settings.value.queue.tasks[0]!.sessionId,'session-1')
+  assert.equal(settings.value.queue.tasks[0]!.status,'interrupted')
+  coordinator.dispose()
+})
+test('T02 RED: pause while optional title call is pending must not submit Goal',async()=>{
+  const q=add(EMPTY_QUEUE,{...item('titled'),generateTitle:true},'d')
+  const settings=new MockSettings(q)
+  let unblock!:()=>void, entered!:()=>void
+  const gate=new Promise<void>(r=>{unblock=r})
+  const starting=new Promise<void>(r=>{entered=r})
+  const {coordinator,faces}=system(settings,{onFace:face=>{
+    face.waitForTitle=async()=>{entered();await gate}
+  }})
+  coordinator.start();await pause();await coordinator.enable(true);await starting
+  await coordinator.enable(false)
+  unblock();await pause()
+  assert.equal(faces.length,1)
+  assert.equal(faces[0]!.calls.filter(x=>x.startsWith('/goal ')).length,0)
+  assert.equal(settings.value.queue.tasks[0]!.status,'interrupted')
+  coordinator.dispose()
+})
+
+test('T07 RED: native Goal submission preserves all internal line breaks',async()=>{
+  const instructions='目标：验证多行题词\n\n1. 安装依赖\n2. 执行测试\n\n```bash\nnpm run build\nnpm test\n```'
+  const q=add(EMPTY_QUEUE,{workspaceId:'ws',title:'',prompt:instructions,goalMode:true},'g')
+  const settings=new MockSettings(q),{faces,coordinator}=system(settings)
+  coordinator.start();await pause();await coordinator.enable(true);await pause()
+  assert.equal(faces[0]!.calls[0],'/goal '+instructions)
+  faces[0]!.state.running=true;faces[0]!.emit();await pause()
+  faces[0]!.goal!.goal.phase='complete'
+  faces[0]!.state.running=false;faces[0]!.emit();await pause()
+  assert.equal(settings.value.queue.tasks[0]!.status,'completed')
+  coordinator.dispose()
+})
+
+test('T11 RED: title diagnostics survive native Goal completion',async()=>{
+  const q=add(EMPTY_QUEUE,{...item('title-error'),generateTitle:true},'t')
+  const settings=new MockSettings(q),{faces,coordinator}=system(settings,{onFace:face=>{face.rejectTitle=true}})
+  coordinator.start();await pause();await coordinator.enable(true);await pause()
+  assert.equal(settings.value.queue.tasks[0]!.status,'running')
+  faces[0]!.state.running=true;faces[0]!.emit();await pause()
+  faces[0]!.goal!.goal.phase='complete'
+  faces[0]!.state.running=false;faces[0]!.emit();await pause()
+  const task=settings.value.queue.tasks[0]!
+  assert.equal(task.status,'completed')
+  assert.match((task as {titleError?:string}).titleError??'',/模型标题/)
   coordinator.dispose()
 })

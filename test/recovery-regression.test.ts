@@ -14,19 +14,25 @@ class SettingsDouble {
   failAt = 0
   failForeverAfter = 0
   commitBeforeFailure = false
+  closeOnFailure = false
   attempts = 0
+  beforeStartingWrite?: () => Promise<void>
   listeners = new Set<() => void>()
   constructor(queue: QueueState) { this.value = { version: 1, queue } }
   getSnapshot() { return { status: this.status, value: this.status === 'ready' ? this.value : undefined, error: this.error } }
   subscribe(fn: () => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn) } }
   async set(_field: string, queue: QueueState) {
     if (this.status !== 'ready') throw Error('Host settings not ready')
+    if (queue.tasks.some(t => t.status === 'starting')) await this.beforeStartingWrite?.()
     this.attempts++
     const fail = this.attempts === this.failAt || (this.failForeverAfter > 0 && this.attempts >= this.failForeverAfter)
     if (!fail || this.commitBeforeFailure) {
       this.value = { version: 1, queue }; this.writes.push(queue); this.notify()
     }
-    if (fail) throw Error('simulated Host write result unknown')
+    if (fail) {
+      if (this.closeOnFailure) this.failClosed('simulated Host CAS failure')
+      throw Error('simulated Host write result unknown')
+    }
   }
   notify() { for (const callback of this.listeners) callback() }
   failClosed(reason: string) { this.status = 'error'; this.error = reason; this.notify() }
@@ -170,5 +176,49 @@ test('T04 a later Pause click cancels pending Start authorization', async () => 
   await Promise.all([starting, stopping]); await settle()
   assert.equal(settings.value.queue.enabled, false)
   assert.equal(x.creates(), 0)
+  x.coordinator.dispose()
+})
+
+test('T01 RED: Pause during a delayed claim returns an unsubmitted task to pending', async () => {
+  const settings = new SettingsDouble(add(EMPTY_QUEUE, input('claim-race'), 'a'))
+  const x = fixture(settings)
+  let release!: () => void
+  let signalEntered!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  const entered = new Promise<void>(resolve => { signalEntered = resolve })
+  settings.beforeStartingWrite = async () => { signalEntered(); await held }
+  x.coordinator.start()
+  await settle()
+  await x.coordinator.enable(true)
+  await entered
+  const pausing = x.coordinator.enable(false)
+  release()
+  await pausing
+  await settle()
+  assert.equal(x.creates(), 0)
+  assert.equal(settings.value.queue.tasks[0]?.status, 'pending')
+  assert.deepEqual(settings.value.queue.activeIds, [])
+  x.coordinator.dispose()
+})
+
+test('T03 RED: after Host write failure then trusted refresh queue stays disarmed',async()=>{
+  const settings=new SettingsDouble(add(add(EMPTY_QUEUE,input('A'),'a'),input('B'),'b'))
+  const x=fixture(settings)
+  x.coordinator.start();await settle();await x.coordinator.enable(true);await settle()
+  assert.equal(x.creates(),1)
+  settings.closeOnFailure=true
+  settings.failAt=settings.attempts+1
+  await assert.rejects(x.coordinator.add(input('C')),/simulated Host write/)
+  assert.equal(settings.status,'error')
+  // A trusted fresh Host document reports A finished and B queued, but the
+  // failed write must permanently revoke this Client's old Start authorization.
+  settings.status='ready'
+  const tasks=settings.value.queue.tasks.map(t=>t.id==='a'
+    ?{...t,status:'completed' as const}:t)
+  settings.value={version:1,queue:{...settings.value.queue,
+    enabled:true,activeId:null,activeIds:[],tasks}}
+  settings.notify()
+  await settle()
+  assert.equal(x.creates(),1,'refresh must not dispatch without a NEW manual Start')
   x.coordinator.dispose()
 })

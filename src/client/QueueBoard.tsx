@@ -1,16 +1,18 @@
 /** Workspace-aware, reorderable single-lane queue. No second Session/Goal authority. */
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, useSyncExternalStore, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { PropsStore, PropsHooks, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { QueueSettingsSource } from './settings.ts'
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { DEFAULT_SETTINGS, UNRESOLVED, type Task } from '../queue.ts'
+import { DEFAULT_SETTINGS, UNRESOLVED, summarizeQueue, type Task } from '../queue.ts'
+import { MAX_TITLE_INPUT_CHARS } from '../title-policy.ts'
 import type { viewStore } from './store.ts'
 import type { Coordinator } from './coordinator.ts'
 import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types'
 import { resolveTaskModel, type TaskModelSelection } from '../model-policy.ts'
+import { filterTaskRows, type TaskFilter } from './queue-view.ts'
 
-type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open' | 'discover' | 'resumeGoal' | 'setConcurrency'> & {refresh: () => Promise<void>; modelCatalog: () => Promise<ModelCatalog>}
+type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open' | 'discover' | 'resumeGoal' | 'setConcurrency' | 'isAuthorized' | 'subscribeAuthorization' | 'openAttempt'> & {refresh: () => Promise<void>; modelCatalog: () => Promise<ModelCatalog>}
 export type BoardProps = PropsStore<typeof viewStore> & PropsRuntime<'shell.overlay'> &
   PropsHooks<{queueSettings: QueueSettingsSource, workspaces: {
     getSnapshot():WorkspaceSnapshot;subscribe(listener:()=>void):()=>void
@@ -27,7 +29,10 @@ export function QueueBoard(props:BoardProps) {
   const settings = loadingState.value ?? DEFAULT_SETTINGS
   const workspaces = props.useWorkspaces(s=>s)
   const q = settings.queue
+  const authorized=useSyncExternalStore(props.operations.subscribeAuthorization, props.operations.isAuthorized)
+  const queueEnabled=q.enabled && authorized
   const blockers = q.tasks.filter(t => UNRESOLVED.includes(t.status))
+  const summary=summarizeQueue(q)
   const [editing,setEditing] = useState<string|null>(null)
   const [title,setTitle] = useState('')
   const [workspaceId,setWorkspaceId] = useState('')
@@ -49,6 +54,9 @@ export function QueueBoard(props:BoardProps) {
     void props.operations.modelCatalog().then(value=>{if(alive)setCatalog(value)},e=>{if(alive)setCatalogError(message(e))})
     return()=>{alive=false}
   },[open,catalogRevision,loadingState.status,props.operations.modelCatalog])
+  const [resuming,setResuming] = useState<string|null>(null)
+  const [filter,setFilter] = useState<TaskFilter>('current')
+  const [expanded,setExpanded] = useState<Record<string,boolean>>({})
   useEffect(()=>{
     if (!open) return
     const onKey = (e:KeyboardEvent)=>{if(e.key==='Escape')props.actions.close()}
@@ -91,6 +99,10 @@ export function QueueBoard(props:BoardProps) {
   const onSave = async (event:FormEvent)=>{
     event.preventDefault()
     if(submitting)return
+    if(generateTitle&&prompt.length>MAX_TITLE_INPUT_CHARS){
+      props.actions.error('模型标题最多接受 8000 个 UTF-16 代码单元，请缩短题词或关闭标题生成')
+      return
+    }
     setSubmitting(true)
     try {
       if(!catalog)throw Error(catalogError||'正在读取 Host 模型目录')
@@ -103,33 +115,43 @@ export function QueueBoard(props:BoardProps) {
     }catch(e){props.actions.error(message(e))}
     finally{setSubmitting(false)}
   }
-  const busy = q.activeIds.length > 0
+  const busy = q.activeIds.length+q.sessionActivity.length > 0
+  const visibleRows=filterTaskRows(q,filter)
+  const formatTime=(value:number)=>{
+    const date=new Date(value)
+    return Number.isNaN(date.getTime())?'未知':date.toLocaleString()
+  }
   return createPortal(<div className="gq-root" role="dialog" aria-modal="true" aria-label="DSH 任务队列">
     <header className="gq-head">
-      <div><h1>DSH 任务队列</h1><span>跨工作区任务 · {q.tasks.filter(t=>t.status==='pending').length} 项待执行</span></div>
+      <div><h1>DSH 任务队列</h1><span>跨工作区任务 · {summary.pending} 项待执行 · {summary.unresolved} 项异常</span></div>
       <div className="gq-actions">
         <button type="button" onClick={newForm}>添加任务</button>
         <button type="button" disabled={discovering} onClick={()=>{setDiscovering(true);void change(()=>props.operations.discover().then(()=>{})).finally(()=>setDiscovering(false))}}>{discovering?'扫描中…':'刷新运行任务'}</button>
         <label>最大并发 <select aria-label="最大并发任务数" value={q.maxConcurrent} onChange={e=>{void change(()=>props.operations.setConcurrency(Number(e.target.value)))}}>
           {Array.from({length:8},(_,i)=>i+1).map(n=><option key={n} value={n}>{n}</option>)}
         </select></label>
-        <button type="button" className={q.enabled?'gq-warn':'gq-primary'} disabled={!q.enabled && (blockers.length>0 || discovering)} onClick={()=>{void change(()=>props.operations.enable(!q.enabled))}}>
-          {q.enabled?'暂停队列':'启动队列'}
+        <button type="button" className={queueEnabled?'gq-warn':'gq-primary'} disabled={!queueEnabled && (blockers.length>0 || discovering)} onClick={()=>{void change(()=>props.operations.enable(!queueEnabled))}}>
+          {queueEnabled?'暂停队列':'启动队列'}
         </button>
         <button type="button" onClick={()=>props.actions.close()}>关闭</button>
       </div>
     </header>
     <div className="gq-notes">
-      {q.enabled?'队列已启用：按并发上限派发任务。':'队列已暂停：不会启动下一项；已有任务不会被中断。'}
-      {busy?` 当前有 ${q.activeIds.length} 项运行／观察任务，最大并发 ${q.maxConcurrent}。`:''}
-      {q.activeIds.length>q.maxConcurrent&&<div className="gq-error">发现的运行任务已超过并发上限；不会强制结束已有 Session，也不会派发新任务。</div>}
+      {queueEnabled?'队列已启用：按并发上限派发任务。':'队列未获当前客户端启动授权：不会启动下一项；已有任务不会被中断。'}
+      {busy?` 当前有 ${q.activeIds.length+q.sessionActivity.length} 项运行／观察任务，最大并发 ${q.maxConcurrent}。`:''}
+      {q.activeIds.length+q.sessionActivity.length>q.maxConcurrent&&<div className="gq-error">发现的运行任务已超过并发上限；不会强制结束已有 Session，也不会派发新任务。</div>}
       {blockers.length>0 && <div className="gq-error" role="alert">有 {blockers.length} 项异常任务尚未处理，已禁止启动后续任务。先查看旧 Session，明确选择重新排队或人工跳过。</div>}
       <div>目标模式以 DSH Goal 的 complete / blocked 为准；普通模式以已观察到的运行→空闲为准，不代表代码已通过人工验收。</div>
     </div>
     {q.error && <div className="gq-error" role="alert">{q.error}</div>}
     {error && <div className="gq-error" role="alert">操作失败：{error}</div>}
+    <nav className="gq-filters" aria-label="队列筛选">
+      {([['current','待执行与运行'],['abnormal','异常待处理'],['history','已完成与跳过'],['all','全部任务']] as const).map(([value,label])=>
+        <button key={value} type="button" aria-pressed={filter===value}
+          onClick={()=>setFilter(value)}>{label}</button>)}
+    </nav>
     <main className="gq-list">
-      {q.tasks.length===0?<div className="gq-empty">队列为空。添加任务并选择工作区，随后点击启动队列。</div>:q.tasks.map((task,i)=>{
+      {q.tasks.length===0?<div className="gq-empty">队列为空。添加任务并选择工作区，随后点击启动队列。</div>:visibleRows.length===0?<div className="gq-empty">此分类暂无任务。可切换筛选查看其他记录。</div>:visibleRows.map(({task,index:i})=>{
         const editable = task.status==='pending' && task.source!=='discovered'
         return <article className="gq-task" key={task.id} data-status={task.status}>
           <div className="gq-task-top">
@@ -143,14 +165,24 @@ export function QueueBoard(props:BoardProps) {
           </div>
           <p className="gq-prompt">{task.prompt||'已纳入 DPH 现有 Session；无需重新提交指令'}</p>
           <p className="gq-detail">{task.modelSelection?`模型：${task.modelSelection.provider} / ${task.modelSelection.model} · 推理：${task.modelSelection.reasoningEffort??'不适用'}`:task.source==='discovered'?'模型：沿用原 Session 配置':'模型：派发时使用 Host 默认并固定配置'}</p>
+          <p className="gq-detail">创建 {formatTime(task.createdAt)} · 最近状态 {formatTime(task.updatedAt)}</p>
           {task.detail&&<p className="gq-detail">{task.detail}</p>}
+           {task.titleError&&<p className="gq-detail" role="status">{task.titleError}</p>}
           <div className="gq-task-controls">
             <button type="button" disabled={!editable||!q.tasks.slice(0,i).some(t=>t.status==='pending')} onClick={()=>{void change(()=>props.operations.move(task.id,-1))}}>上移</button>
             <button type="button" disabled={!editable||!q.tasks.slice(i+1).some(t=>t.status==='pending')} onClick={()=>{void change(()=>props.operations.move(task.id,1))}}>下移</button>
             <button type="button" disabled={!editable} onClick={()=>editForm(task)}>编辑</button>
             <button type="button" disabled={q.activeIds.includes(task.id)||UNRESOLVED.includes(task.status)} onClick={()=>{void change(()=>props.operations.remove(task.id))}}>删除</button>
             {task.sessionId&&<button type="button" onClick={()=>{props.operations.open(task.id);props.actions.close()}}>打开 Session</button>}
-            {task.status==='interrupted'&&task.goalMode&&task.sessionId&&<button type="button" onClick={()=>{if(!window.confirm('将在原 Session 内执行 /goal resume；请确认先前的执行已经停止。'))return;void change(()=>props.operations.resumeGoal(task.id))}}>激活旧 Goal</button>}
+            {Boolean(task.attempts?.length)&&<button type="button" aria-expanded={Boolean(expanded[task.id])}
+              onClick={()=>setExpanded(s=>({...s,[task.id]:!s[task.id]}))}>执行记录 ({task.attempts?.length})</button>}
+            {(task.status==='interrupted'||task.status==='blocked')&&task.goalMode&&task.sessionId&&<button
+              type="button" disabled={resuming!==null} aria-busy={resuming===task.id}
+              onClick={()=>{
+                if(resuming!==null||!window.confirm('将在原 Session 内执行 /goal resume；请确认先前的执行已经停止。'))return
+                setResuming(task.id)
+                void change(()=>props.operations.resumeGoal(task.id)).finally(()=>setResuming(null))
+              }}>{resuming===task.id?'正在核实旧 Goal…':'继续原 Goal'}</button>}
             {UNRESOLVED.includes(task.status)&&Boolean(task.prompt.trim())&&<button type="button" onClick={()=>{
               if(!window.confirm('重新排队将创建新的 Session。请先确认旧 Session 已停止，防止重复修改代码。'))return
               void change(()=>props.operations.retry(task.id))
@@ -160,6 +192,14 @@ export function QueueBoard(props:BoardProps) {
               void change(()=>props.operations.skip(task.id))
             }}>人工跳过</button>}
           </div>
+          {expanded[task.id]&&<div className="gq-history" aria-label="历次执行记录">
+            {task.attempts?.map((attempt,index)=><div className="gq-history-row" key={attempt.id}>
+              <span>第 {index+1} 次 · {labels[attempt.status]} · Session：{attempt.sessionId||'未知'} · 记录 {formatTime(attempt.updatedAt)}</span>
+              {attempt.sessionId&&<button type="button" onClick={()=>{
+                props.operations.openAttempt(task.id,attempt.id);props.actions.close()
+              }}>打开历史 Session</button>}
+            </div>)}
+          </div>}
         </article>
       })}
     </main>
@@ -195,8 +235,9 @@ export function QueueBoard(props:BoardProps) {
         <p>标题生成使用与任务相同的模型和推理强度。未选择“派发时使用 Host 默认”时，保存即固定配置。Harness 原生模型选择也会更新 Host 默认模型；恢复已有 Session 不重新设置模型。</p>
         <label className="gq-check"><input type="checkbox" checked={goalMode} onChange={e=>setGoalMode(e.target.checked)}/> 使用 DSH 原生目标模式（/goal）</label>
         <label>任务说明<textarea required value={prompt} onChange={e=>setPrompt(e.target.value)} rows={7} placeholder="说明任务、约束和验收标准"/></label>
+        {generateTitle&&<p role={prompt.length>MAX_TITLE_INPUT_CHARS?'alert':'status'}>标题辅助请求最多 {MAX_TITLE_INPUT_CHARS} 个 UTF-16 代码单元，当前 {prompt.length}。超限可取消模型标题，原任务题词不会被截断。</p>}
         <p>标题可留空；不勾选时普通任务沿用 DSH 原生标题，纯 /goal 无法触发首消息自动命名。勾选后插件通过 Host 无工具的独立模型请求生成标题（8–80 字符硬上限），不向任务 Session 发送额外执行指令。</p>
-        <footer><button type="button" onClick={()=>setEditing(null)}>取消</button><button className="gq-primary" disabled={submitting||!workspaceId||!catalog||Boolean(modelError)} type="submit">保存</button></footer>
+        <footer><button type="button" onClick={()=>setEditing(null)}>取消</button><button className="gq-primary" disabled={submitting||!workspaceId||!catalog||Boolean(modelError)||(generateTitle&&prompt.length>MAX_TITLE_INPUT_CHARS)} type="submit">保存</button></footer>
       </form>
     </div>}
   </div>,document.body)

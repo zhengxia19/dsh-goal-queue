@@ -3,6 +3,10 @@ import { isModelSelection, type TaskModelSelection } from './model-policy.ts'
 export const VERSION = 1 as const
 export type TaskStatus = 'pending'|'starting'|'running'|'completed'|'blocked'|'failed'|'interrupted'|'skipped'
 export type TaskSource = 'queue'|'discovered'
+export interface TaskAttempt {
+  id:string; status:TaskStatus; sessionId?:string; goalId?:string;
+  seenRunning?:boolean; detail?:string; createdAt:number; updatedAt:number
+}
 export interface Task {
   id: string; workspaceId: string; title: string; prompt: string; goalMode: boolean
   status: TaskStatus; source?: TaskSource; sessionId?: string; goalId?: string
@@ -11,6 +15,8 @@ export interface Task {
   /** Missing only for legacy tasks or explicit dispatch-time Host default. */
   modelSelection?: TaskModelSelection
   seenRunning?: boolean; detail?: string; createdAt: number; updatedAt: number
+  attempts?: TaskAttempt[]
+  titleError?: string
 }
 export type TaskInput = Pick<Task,'title'|'workspaceId'|'prompt'|'goalMode'> & Partial<Pick<Task,'generateTitle'|'titleMaxChars'|'modelSelection'>>
 export interface QueueState {
@@ -18,12 +24,14 @@ export interface QueueState {
   /** Legacy v1 key, retained for old config compatibility. New dispatch uses activeIds. */
   activeId: string|null
   activeIds: string[]
+  /** Running Sessions from completed/older attempts; never task execution owners. */
+  sessionActivity: string[]
   maxConcurrent: number
   tasks: Task[]
   error: string
 }
 export interface QueueSettings { version: 1; queue: QueueState }
-export const EMPTY_QUEUE: QueueState = {enabled:false,activeId:null,activeIds:[],maxConcurrent:1,tasks:[],error:''}
+export const EMPTY_QUEUE: QueueState = {enabled:false,activeId:null,activeIds:[],sessionActivity:[],maxConcurrent:1,tasks:[],error:''}
 export const DEFAULT_SETTINGS: QueueSettings = {version:VERSION,queue:EMPTY_QUEUE}
 export const UNRESOLVED: readonly TaskStatus[] = ['blocked','failed','interrupted']
 export const STATES: readonly TaskStatus[] = ['pending','starting','running','completed','blocked','failed','interrupted','skipped']
@@ -31,6 +39,38 @@ const object=(v:unknown):v is Record<string,unknown>=>v!==null&&typeof v==='obje
 const active=(t:Task)=>t.status==='running'||t.status==='starting'
 const legacy=(ids:string[])=>ids.length===1?ids[0]!:null
 const withActive=(q:QueueState,ids:string[]):QueueState=>({...q,activeIds:ids,activeId:legacy(ids)})
+function validAttempts(raw:unknown):raw is TaskAttempt[]{
+  if(!Array.isArray(raw))return false
+  const seen=new Set<string>()
+  return raw.every(a=>{
+    if(!object(a)||typeof a.id!=='string'||!a.id||seen.has(a.id)
+      ||!STATES.includes(a.status as TaskStatus)
+      ||typeof a.createdAt!=='number'||!Number.isFinite(a.createdAt)
+      ||typeof a.updatedAt!=='number'||!Number.isFinite(a.updatedAt)
+      ||(a.sessionId!==undefined&&typeof a.sessionId!=='string')
+      ||(a.goalId!==undefined&&typeof a.goalId!=='string')
+      ||(a.seenRunning!==undefined&&typeof a.seenRunning!=='boolean')
+      ||(a.detail!==undefined&&typeof a.detail!=='string'))return false
+    seen.add(a.id);return true
+  })
+}
+/** Idempotently surface one legacy execution without deleting its Session identity. */
+export function attemptsOf(t:Task):TaskAttempt[]{
+  if(t.attempts!==undefined)return t.attempts
+  if(t.status==='pending'&&!t.sessionId)return []
+  return [{id:t.id+':attempt:1',status:t.status,sessionId:t.sessionId,goalId:t.goalId,
+    seenRunning:t.seenRunning,detail:t.detail,createdAt:t.createdAt,updatedAt:t.updatedAt}]
+}
+function amendAttempt(t:Task,patch:Partial<Task>,now:number):Task{
+  const attempts=attemptsOf(t)
+  const out={...t,...patch,updatedAt:now}
+  if(!attempts.length)return {...out,attempts}
+  const last=attempts[attempts.length-1]!
+  return {...out,attempts:[...attempts.slice(0,-1),{
+    ...last,status:out.status,sessionId:out.sessionId,goalId:out.goalId,
+    seenRunning:out.seenRunning,detail:out.detail,updatedAt:now
+  }]}
+}
 export function decode(value:unknown):QueueSettings|undefined {
   if(!object(value)||value.version!==VERSION||!object(value.queue))return
   const q=value.queue
@@ -38,6 +78,9 @@ export function decode(value:unknown):QueueSettings|undefined {
   if(q.activeId!==undefined&&q.activeId!==null&&typeof q.activeId!=='string')return
   const max=q.maxConcurrent===undefined?1:q.maxConcurrent
   if(!Number.isInteger(max)||typeof max!=='number'||max<1||max>8)return
+  const activities=q.sessionActivity===undefined?[]:q.sessionActivity
+  if(!Array.isArray(activities)||activities.some(x=>typeof x!=='string'||!x)
+    ||new Set(activities).size!==activities.length)return
   const tasks:Task[]=[],ids=new Set<string>(),sessionIds=new Set<string>()
   for(const raw of q.tasks){
     if(!object(raw)||typeof raw.id!=='string'||!raw.id||ids.has(raw.id)
@@ -52,12 +95,16 @@ export function decode(value:unknown):QueueSettings|undefined {
       ||(raw.sessionId!==undefined&&typeof raw.sessionId!=='string')
       ||(raw.goalId!==undefined&&typeof raw.goalId!=='string')
       ||(raw.seenRunning!==undefined&&typeof raw.seenRunning!=='boolean')
-      ||(raw.detail!==undefined&&typeof raw.detail!=='string'))return
+      ||(raw.detail!==undefined&&typeof raw.detail!=='string')
+      ||(raw.titleError!==undefined&&typeof raw.titleError!=='string')
+      ||(raw.attempts!==undefined&&!validAttempts(raw.attempts)))return
     if(typeof raw.sessionId==='string'){
       if(sessionIds.has(raw.sessionId))return
       sessionIds.add(raw.sessionId)
     }
-    ids.add(raw.id);tasks.push(raw as unknown as Task)
+    ids.add(raw.id)
+    const task=raw as unknown as Task
+    tasks.push({...task,attempts:attemptsOf(task)})
   }
   const running=tasks.filter(active).map(t=>t.id)
   const slots=q.activeIds===undefined||(Array.isArray(q.activeIds)&&q.activeIds.length===0&&q.activeId)
@@ -67,7 +114,7 @@ export function decode(value:unknown):QueueSettings|undefined {
     ||running.some(x=>!slots.includes(x)))return
   return {version:VERSION,queue:{
     enabled:q.enabled,activeId:legacy(slots),activeIds:[...slots],maxConcurrent:max,
-    tasks,error:q.error
+    tasks,sessionActivity:[...activities],error:q.error
   }}
 }
 function titleOptions(input: TaskInput): Pick<Task, 'generateTitle'|'titleMaxChars'> {
@@ -107,13 +154,37 @@ export function setConcurrency(q:QueueState,maxConcurrent:number):QueueState{
   if(!Number.isInteger(maxConcurrent)||maxConcurrent<1||maxConcurrent>8)throw Error('并发任务数必须是 1–8 的整数')
   return {...q,maxConcurrent}
 }
+export function summarizeQueue(q:QueueState):{unresolved:number;running:number;pending:number}{
+  return {
+    unresolved:q.tasks.filter(t=>UNRESOLVED.includes(t.status)).length,
+    running:q.activeIds.length+q.sessionActivity.length,
+    pending:q.tasks.filter(t=>t.status==='pending').length
+  }
+}
 export function next(q:QueueState):Task|undefined{
-  if(!q.enabled||q.activeIds.length>=q.maxConcurrent||q.tasks.some(t=>UNRESOLVED.includes(t.status)))return
+  if(!q.enabled||q.activeIds.length+q.sessionActivity.length>=q.maxConcurrent||q.tasks.some(t=>UNRESOLVED.includes(t.status)))return
   return q.tasks.find(t=>t.status==='pending'&&t.source!=='discovered')
+}
+/** A currently running Session is counted once, without reopening a completed task. */
+export function trackSessionActivity(q:QueueState,sessionId:string):QueueState{
+  if(q.tasks.some(t=>q.activeIds.includes(t.id)&&t.sessionId===sessionId))return q
+  if(q.sessionActivity.includes(sessionId))return q
+  return {...q,sessionActivity:[...q.sessionActivity,sessionId]}
+}
+export function releaseSessionActivity(q:QueueState,sessionId:string):QueueState{
+  if(!q.sessionActivity.includes(sessionId))return q
+  return {...q,sessionActivity:q.sessionActivity.filter(x=>x!==sessionId)}
 }
 export function claim(q:QueueState,id:string,now=Date.now()):QueueState{
   if(next(q)?.id!==id)throw Error('任务不在可调度队首或并发容量已满')
-  return withActive({...q,tasks:q.tasks.map(t=>t.id===id?{...t,status:'starting',updatedAt:now}:t)},[...q.activeIds,id])
+  return withActive({...q,tasks:q.tasks.map(t=>{
+    if(t.id!==id)return t
+    const attempts=attemptsOf(t)
+    return {...t,status:'starting',updatedAt:now,attempts:[...attempts,{
+      id:t.id+':attempt:'+(attempts.length+1),status:'starting' as const,
+      createdAt:now,updatedAt:now
+    }]}
+  })},[...q.activeIds,id])
 }
 export function updateActive(q:QueueState,id:string,patch:Partial<Task>,now=Date.now()):QueueState{
   if(!q.activeIds.includes(id))throw Error('当前任务执行权已经失效')
@@ -127,13 +198,26 @@ export function updateActive(q:QueueState,id:string,patch:Partial<Task>,now=Date
   return withActive({...q,
     enabled:status&&UNRESOLVED.includes(status)?false:q.enabled,
     error:status&&UNRESOLVED.includes(status)?(patch.detail||status):q.error,
-    tasks:q.tasks.map(t=>t.id===id?{...t,...rest,...(status?{status}:{}),updatedAt:now}:t)
+    tasks:q.tasks.map(t=>t.id===id?amendAttempt(t,{...rest,...(status?{status}: {})},now):t)
   },ids)
+}
+/** Release a reserved slot only when no Session was created and no command submitted. */
+export function releaseUnsubmittedClaim(q:QueueState,id:string):QueueState{
+  const task=q.tasks.find(t=>t.id===id)
+  if(!task||task.status!=='starting'||task.sessionId||!q.activeIds.includes(id))return q
+  return withActive({...q,tasks:q.tasks.map(t=>{
+    if(t.id!==id)return t
+    const attempts=attemptsOf(t)
+    // This reservation never reached a Session: discard its unsubmitted attempt.
+    return {...t,status:'pending',updatedAt:Date.now(),
+      attempts:attempts.at(-1)?.status==='starting'&&!attempts.at(-1)?.sessionId
+        ?attempts.slice(0,-1):attempts}
+  })},q.activeIds.filter(x=>x!==id))
 }
 export function setSessionId(q:QueueState,id:string,sessionId:string):QueueState{
   if(!q.activeIds.includes(id))throw Error('当前任务执行权已失效')
   if(q.tasks.some(t=>t.id!==id&&t.sessionId===sessionId))throw Error('Session 已归属另一任务')
-  return {...q,tasks:q.tasks.map(t=>t.id===id?{...t,sessionId,updatedAt:Date.now()}:t)}
+  return {...q,tasks:q.tasks.map(t=>t.id===id?amendAttempt(t,{sessionId},Date.now()):t)}
 }
 /** Freeze a resolved route in the same CAS as the active task; never retarget an existing Session. */
 export function setTaskModel(q:QueueState,id:string,modelSelection:TaskModelSelection):QueueState{
@@ -143,10 +227,10 @@ export function setTaskModel(q:QueueState,id:string,modelSelection:TaskModelSele
   return {...q,tasks:q.tasks.map(t=>t.id===id?{...t,modelSelection:{...modelSelection},updatedAt:Date.now()}:t)}
 }
 export function recover(q:QueueState,reason='应用重新启动，旧会话等待核实'):QueueState{
-  if(!q.enabled&&!q.activeIds.length)return q
+  if(!q.enabled&&!q.activeIds.length&&!q.sessionActivity.length)return q
   const affected=new Set(q.activeIds)
-  return withActive({...q,enabled:false,error:reason,
-    tasks:q.tasks.map(t=>affected.has(t.id)?{...t,status:'interrupted',detail:reason,updatedAt:Date.now()}:t)
+  return withActive({...q,enabled:false,error:reason,sessionActivity:[],
+    tasks:q.tasks.map(t=>affected.has(t.id)?amendAttempt(t,{status:'interrupted',detail:reason},Date.now()):t)
   },[])
 }
 /** Adopt only a Host-confirmed *currently running* Session; never submit another prompt. */
@@ -156,22 +240,34 @@ export function adopt(q:QueueState,data:{sessionId:string;workspaceId:string;tit
     if(current.status==='running'||current.status==='starting')return q
     if(current.status!=='interrupted')return q
     const ids=[...q.activeIds,current.id]
-    return withActive({...q,tasks:q.tasks.map(t=>t.id===current.id?{
-      ...t,status:'running',detail:'已重新关联仍在运行的原 Session；队列保持暂停',
-      goalId:data.goalId??t.goalId,seenRunning:true,updatedAt:now
-    }:t)},ids)
+    return withActive({...q,tasks:q.tasks.map(t=>t.id===current.id
+      ?amendAttempt(t,{status:'running',detail:'已重新关联仍在运行的原 Session；队列保持暂停',
+        goalId:data.goalId??t.goalId,seenRunning:true},now):t)},ids)
   }
   if(q.tasks.some(t=>t.id===id))throw Error('任务 ID 重复')
-  return withActive({...q,tasks:[...q.tasks,{
+  const task:Task={
     id,sessionId:data.sessionId,workspaceId:data.workspaceId,title:data.title,
     prompt:data.prompt??'',goalMode:data.goalMode,goalId:data.goalId,source:'discovered',
     status:'running',seenRunning:true,detail:'发现已有运行 Session；仅观察，不重复执行',
     createdAt:now,updatedAt:now
-  }]},[...q.activeIds,id])
+  }
+  return withActive({...q,tasks:[...q.tasks,{...task,attempts:attemptsOf(task)}]},[...q.activeIds,id])
 }
 export function updateTitle(q:QueueState,id:string,title:string):QueueState{
   if(!title.trim())return q
   return {...q,tasks:q.tasks.map(t=>t.id===id?{...t,title:title.trim(),updatedAt:Date.now()}:t)}
+}
+/** Atomically reserve the original Session for exactly one explicit Goal resume. */
+export function claimGoalResume(q:QueueState,id:string,goalId:string,now=Date.now()):QueueState{
+  const task=q.tasks.find(t=>t.id===id)
+  if(!task||!['interrupted','blocked'].includes(task.status)||!task.goalMode||!task.sessionId)
+    throw Error('旧 Goal 状态已改变或不能恢复，请刷新')
+  if(task.goalId&&task.goalId!==goalId)throw Error('原 Goal ID 已改变，拒绝恢复')
+  if(q.activeIds.length+q.sessionActivity.length>=q.maxConcurrent)throw Error('当前并发名额已满')
+  if(q.activeIds.includes(id))throw Error('该 Goal 已处于恢复过程')
+  return withActive({...q,tasks:q.tasks.map(t=>t.id===id
+    ?amendAttempt(t,{status:'starting',goalId,detail:'旧 Goal 恢复命令准备中'},now):t)},
+    [...q.activeIds,id])
 }
 export function retry(q:QueueState,id:string):QueueState{
   if(q.activeIds.includes(id))throw Error('不能重新派发仍在运行的任务')
@@ -179,14 +275,14 @@ export function retry(q:QueueState,id:string):QueueState{
   if(task&&UNRESOLVED.includes(task.status)&&!task.prompt.trim())
     throw Error('导入的 Session 没有可复用的任务说明，不能重新派发；请人工跳过后新建任务')
   return {...q,tasks:q.tasks.map(t=>t.id===id&&UNRESOLVED.includes(t.status)?{
-    ...t,status:'pending',source:'queue',sessionId:undefined,goalId:undefined,seenRunning:false,
+    ...t,attempts:attemptsOf(t),status:'pending',source:'queue',
+    sessionId:undefined,goalId:undefined,seenRunning:false,
     detail:'重新排队会创建新 Session，请先确认旧 Session 已停止',updatedAt:Date.now()
   }:t)}
 }
 export function skip(q:QueueState,id:string):QueueState{
   if(q.activeIds.includes(id))throw Error('运行任务不能跳过')
   if(!q.tasks.some(t=>t.id===id&&UNRESOLVED.includes(t.status)))throw Error('只能手工跳过未处置的异常任务')
-  return {...q,tasks:q.tasks.map(t=>t.id===id&&UNRESOLVED.includes(t.status)?{
-    ...t,status:'skipped',detail:'用户确认跳过；不代表执行完成',updatedAt:Date.now()
-  }:t)}
+  return {...q,tasks:q.tasks.map(t=>t.id===id&&UNRESOLVED.includes(t.status)
+    ?amendAttempt(t,{status:'skipped',detail:'用户确认跳过；不代表执行完成'},Date.now()):t)}
 }

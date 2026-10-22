@@ -1,4 +1,4 @@
-# AGENTS.md — DSH Goal Queue v0.3.1
+# AGENTS.md — DSH Goal Queue v0.3.2-preview.0
 
 此插件适配 DPH / DeepSeek Harness Desktop V0.2.1-rc.2。修改时必须保持下列高优先级约束，构建成功不能替代 Windows DPH Desktop 实机验收。
 
@@ -23,3 +23,14 @@
 - [模型标题生成复审](docs/模型标题生成_复审_2026-10-19.md)
 - [任务模型与标题修复及验收状态](docs/任务模型与标题修复_2026-10-19.md)
 - [DPH 实机验收清单](docs/DPH_V0.2.1-rc.2_实机验收清单.md)
+
+## v0.3.2-preview.0 调度与历史约束（2026-10-20）
+
+11. 任何 Host settings 的 loading/error/CAS 失信必须撤销 Client 的执行授权；读取恢复不代表再次启动授权。界面必须展示授权真实值，不只看持久 `queue.enabled`。
+12. claim 释放只允许尚未创建 Session 的情况；已创建 Session 必须留 ID 和人工核实状态。模型标题请求不能在用户暂停后触发新的目标命令。
+13. 同一个 Goal 恢复操作必须由持久原子 claim 获得一次执行权；`blocked` 与 `interrupted` 走同一互斥路径，不能因为第二次恢复失败而破坏第一次操作。
+14. 重试/跳过前查询原 Session 当前运行态，连接代际变化与 Host 状态不确定时失败关闭。缺 Session ID 不得自动重派。
+15. `attempts` 保存历史执行证据；`sessionActivity` 是当前重新运行的历史 Session 的独立占位，去重按原生 Session ID。旧 `version=1`、`activeId`、可选标题字段继续安全读取。
+16. `/goal` 的目标内容除首尾 `trim()` 外不得在插件里折叠空白；与 DSH `dsh-v0.2.1-rc.2` 的命令原始输入契约一致。完成仍验证 Goal ID+complete+idle。
+17. AI 标题失败写入 `titleError`，不能改写或伪造任务完成状态；标题长输入只能提示或禁用辅助标题，不能截断原始任务。
+18. T01–T12 的 Mock/CI 成功不能代替 T13 Windows E2E、真正 Host schema、安装卸载及独立验收。正式发布前必须复核 [完整变更计划](docs/change-plan-2026-10-20/00-总调度与验收.md)。

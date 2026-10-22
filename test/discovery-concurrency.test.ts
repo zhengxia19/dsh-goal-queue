@@ -19,6 +19,7 @@ class Face {
   state={running:true,awaitingFirstTurn:false,lastAgentError:null}
   goal:{goal:{id:string;objective:string;phase:string}}|null=null
   watchers=new Set<()=>void>()
+  commands:string[]=[]
   getSnapshot=()=>this.state
   subscribe=(fn:()=>void)=>{this.watchers.add(fn);return()=>{this.watchers.delete(fn)}}
   projections={faceOf:(key:string)=>({
@@ -28,6 +29,7 @@ class Face {
   emit(){for(const fn of this.watchers)fn()}
   async prompt(){this.state.running=true;this.emit();return {ok:true,value:{accepted:true}}}
   async command(line:string){
+    this.commands.push(line)
     if(line==='/goal resume'&&this.goal){this.goal.goal.phase='active';return {ok:true,value:{matched:true}}}
     this.goal={goal:{id:'goal-created',objective:line.slice(6),phase:'active'}}
     this.emit()
@@ -148,4 +150,89 @@ test('an imported unknown prompt must not be replayed as an empty task',()=>{
   let q=adopt(EMPTY_QUEUE,{sessionId:'old',workspaceId:'ws',title:'existing',goalMode:false},'imported')
   q=recover({...q,enabled:true})
   assert.throws(()=>retry(q,'imported'),/没有可复用的任务说明/)
+})
+
+test('T04 RED: concurrent resumeGoal requests must have exactly one command submission',async()=>{
+  let q=add(EMPTY_QUEUE,{workspaceId:'ws',prompt:'Goal work',title:'',goalMode:true},'old')
+  q={...q,tasks:[{...q.tasks[0]!,sessionId:'existing',goalId:'goal-old',status:'interrupted' as const}]}
+  const x=setup(q)
+  x.ordinary.state.running=false
+  x.ordinary.goal={goal:{id:'goal-old',objective:'Goal work',phase:'paused'}}
+  x.coordinator.start();await tick()
+  const results=await Promise.allSettled([x.coordinator.resumeGoal('old'),x.coordinator.resumeGoal('old')])
+  await tick()
+  assert.equal(x.ordinary.commands.filter(c=>c==='/goal resume').length,1)
+  assert.equal(results.filter(r=>r.status==='rejected').length,1)
+  x.coordinator.dispose()
+})
+
+test('T05 RED: blocked old Goal can be resumed in original Session',async()=>{
+  let q=add(EMPTY_QUEUE,{workspaceId:'ws',prompt:'Goal work',title:'',goalMode:true},'old')
+  q={...q,tasks:[{...q.tasks[0]!,sessionId:'existing',goalId:'goal-old',status:'blocked' as const}]}
+  const x=setup(q)
+  x.ordinary.state.running=false
+  x.ordinary.goal={goal:{id:'goal-old',objective:'Goal work',phase:'blocked'}}
+  x.coordinator.start();await tick()
+  await x.coordinator.resumeGoal('old');await tick()
+  assert.equal(x.ordinary.commands.filter(c=>c==='/goal resume').length,1)
+  assert.equal(x.host.value.queue.tasks[0]!.status,'running')
+  x.coordinator.dispose()
+})
+
+test('T06 RED: retry/skip must reject original Session still running',async()=>{
+  let q=add(EMPTY_QUEUE,{workspaceId:'ws',prompt:'Goal work',title:'',goalMode:true},'old')
+  q={...q,tasks:[{...q.tasks[0]!,sessionId:'existing',status:'interrupted' as const}]}
+  const x=setup(q)
+  x.ordinary.state.running=true
+  x.coordinator.start();await tick()
+  await assert.rejects(x.coordinator.retry('old'),/运行|停止/)
+  await assert.rejects(x.coordinator.skip('old'),/运行|停止/)
+  assert.equal(x.host.value.queue.tasks[0]!.status,'interrupted')
+  x.coordinator.dispose()
+})
+
+test('T06: idle original Session may be manually retried and retains no running ownership',async()=>{
+  let q=add(EMPTY_QUEUE,{workspaceId:'ws',prompt:'Goal work',title:'',goalMode:true},'old')
+  q={...q,tasks:[{...q.tasks[0]!,sessionId:'existing',status:'interrupted' as const}]}
+  const x=setup(q)
+  x.ordinary.state.running=false
+  x.coordinator.start();await tick()
+  await x.coordinator.retry('old')
+  assert.equal(x.host.value.queue.tasks[0]!.status,'pending')
+  assert.equal(x.host.value.queue.activeIds.length,0)
+  x.coordinator.dispose()
+})
+test('T06: failed task with unknown original Session may not be blindly retried',async()=>{
+  let q=add(EMPTY_QUEUE,{workspaceId:'ws',prompt:'Goal work',title:'',goalMode:true},'old')
+  q={...q,tasks:[{...q.tasks[0]!,status:'failed' as const}]}
+  const x=setup(q)
+  x.coordinator.start();await tick()
+  await assert.rejects(x.coordinator.retry('old'),/Session ID 缺失/)
+  assert.equal(x.host.value.queue.tasks[0]!.status,'failed')
+  x.coordinator.dispose()
+})
+
+test('T09 RED: a completed Session reused by DPH occupies one observed slot',async()=>{
+  let q=add(add(EMPTY_QUEUE,input('history'),'h'),input('later'),'later')
+  q={...q,tasks:q.tasks.map(t=>t.id==='h'
+    ?{...t,status:'completed' as const,sessionId:'existing'}:t)}
+  const x=setup(q)
+  x.coordinator.start();await tick()
+  await x.coordinator.discover();await tick()
+  await x.coordinator.discover();await tick()
+  assert.deepEqual(x.host.value.queue.sessionActivity,['existing'],'repeated scans must not double count')
+  await x.coordinator.enable(true);await tick()
+  assert.equal(x.created(),0)
+  x.ordinary.state.running=false;x.ordinary.emit();await tick()
+  assert.deepEqual(x.host.value.queue.sessionActivity,[])
+  assert.equal(x.created(),1)
+  assert.equal(x.host.value.queue.tasks[0]?.status,'completed')
+  x.coordinator.dispose()
+})
+
+test('T09: disconnected Session activity does not survive boot recovery as a false slot',()=>{
+  const q={...EMPTY_QUEUE,sessionActivity:['old-session']}
+  const recovered=recover(q)
+  assert.deepEqual(recovered.sessionActivity,[])
+  assert.equal(recovered.enabled,false)
 })
