@@ -6,7 +6,9 @@ import type { QueueSettingsSource } from './settings.ts'
 import { observeTask } from './observe-task.ts'
 import { confirmTaskModel, type TaskModels } from './models.ts'
 import { resolveTaskModel, sameModel } from '../model-policy.ts'
-import { UNRESOLVED,add,adopt,claim,decode,edit,move,next,recover,remove,retry,
+import { QueueError } from '../errors.ts'
+import type { SessionDirectory, DirectorySnapshot } from './directory.ts'
+import { UNRESOLVED,add,adopt,claim,decode,edit,flagForReview,move,next,recover,remove,retry,
   setConcurrency,setSessionId,setTaskModel,skip,updateActive,updateTitle,releaseUnsubmittedClaim,claimGoalResume,trackSessionActivity,releaseSessionActivity,type QueueState,type Task,type TaskInput } from '../queue.ts'
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
   interface SessionReferenceSourceMap { goalQueue: unknown }
@@ -26,8 +28,8 @@ export class Coordinator {
   private repump=false
   private closed=false
   private booted=false
-  /** A trusted Host Session scan is required before first dispatch in Desktop. */
-  private discovered=false
+  /** A trusted Session-directory read is required before first dispatch (U02). */
+  private directoryFresh=false
   private scanning:Promise<number>|undefined
   private armed=false
   private readonly authorizationListeners=new Set<()=>void>()
@@ -50,13 +52,14 @@ export class Coordinator {
   private readonly connected:()=>boolean
   private readonly openSession?: (id:SessionId)=>void
   private readonly models?:TaskModels
+  private readonly directory?:SessionDirectory
   constructor(
     sessions:ISessions,workspaces:IWorkspaces,settings:QueueSettingsSource,
-    connected:()=>boolean,openSession?:(id:SessionId)=>void,models?:TaskModels
+    connected:()=>boolean,openSession?:(id:SessionId)=>void,models?:TaskModels,directory?:SessionDirectory
   ){
     this.sessions=sessions;this.workspaces=workspaces;this.settings=settings
     this.connected=connected;this.openSession=openSession
-    this.models=models
+    this.models=models;this.directory=directory
   }
   start():void {
     this.disposers.push(this.settings.subscribe(()=>{
@@ -77,11 +80,11 @@ export class Coordinator {
   async connectionReset():Promise<void>{
     if(this.closed)return
     this.setArmed(false);this.controlIntent++;this.epoch++;this.releaseAll()
-    this.booted=false;this.discovered=false;void this.pump()
+    this.booted=false;this.directoryFresh=false;void this.pump()
   }
   dispose():void{
     this.closed=true;this.setArmed(false);this.controlIntent++;this.epoch++
-    this.releaseAll();this.discovered=false;for(const stop of this.disposers.splice(0))stop()
+    this.releaseAll();this.directoryFresh=false;for(const stop of this.disposers.splice(0))stop()
   }
   private queue():QueueState {
     const snapshot=this.settings.getSnapshot()
@@ -168,7 +171,7 @@ export class Coordinator {
     await this.write(q=>{
       if(intent!==this.controlIntent)return q
       if(!this.booted||!this.connected()||generation!==this.epoch)throw Error('连接或恢复未就绪')
-      if(enabled&&this.sessions.list&&!this.discovered)throw Error('请先打开队列完成当前 DPH Session 扫描，再启动队列')
+      if(enabled&&this.directory&&!this.directoryFresh)throw Error('请先打开队列完成当前 DPH Session 扫描，再启动队列')
       if(enabled&&q.tasks.some(t=>UNRESOLVED.includes(t.status)))
         throw Error('存在未确认的历史任务，请先检查原 Session 并处置')
       return {...q,enabled,error:enabled?'':q.error}
@@ -187,12 +190,12 @@ export class Coordinator {
       if(this.settings.getSnapshot().status!=='ready')return
       if(!this.booted){
         this.setArmed(false)
-        this.discovered=false
+        this.directoryFresh=false
         await this.write(q=>recover(q,'程序启动或连接切换；检查旧 Session 后手工激活队列'))
         this.booted=true
         return
       }
-      if(!this.armed||!this.connected()||(this.sessions.list&&!this.discovered))return
+      if(!this.armed||!this.connected()||(this.directory&&!this.directoryFresh))return
       // Sequentially reserve each available slot before submitting external work.
       while(this.armed&&!this.closed&&this.connected()){
         const task=next(this.queue())
@@ -373,17 +376,27 @@ export class Coordinator {
   private async scanRunning():Promise<number>{
     if(!this.connected()||!this.booted||this.settings.getSnapshot().status!=='ready')
       throw Error('Host 尚未就绪')
+    if(!this.directory)throw Error('Host 尚未就绪')
     const generation=this.epoch
-    this.discovered=false
-    await this.sessions.refresh()
+    this.directoryFresh=false
+    // U02: the directory read is the authoritative running baseline. A failed read disarms;
+    // a later successful read refreshes the baseline but never re-arms (B1: no auto replay).
+    let snapshot:DirectorySnapshot
+    try{
+      snapshot=await this.directory.list()
+    }catch(e){
+      this.setArmed(false)
+      throw e instanceof QueueError?e:new QueueError('DIRECTORY_READ_FAILED','无法读取运行会话列表：'+err(e))
+    }
     if(generation!==this.epoch||!this.connected())throw Error('扫描期间连接已切换，重新打开队列再试')
-    const snapshot=this.sessions.list.getSnapshot()
-    if(snapshot.phase!=='ready')throw Error('DSH Session 列表尚未读取完成，拒绝以空列表代替')
+    // Client-manager refresh only feeds titles/retain; its failure is best-effort degraded.
+    try{await this.sessions.refresh()}catch(e){console.warn('[goal-queue] session refresh degraded',e)}
+    if(generation!==this.epoch||!this.connected())throw Error('扫描期间连接已切换，重新打开队列再试')
     let found=0
-    for(const id of snapshot.ids){
+    for(const row of snapshot.rows){
+      const id=row.sessionId as SessionId
       if(this.closed||!this.connected()||generation!==this.epoch)throw Error('扫描过程中连接已断开，请重新检查 Session')
-      const row=snapshot.byId[id]
-      if(!row||!row.running||row.origin==='subagent')continue
+      if(!row.running||row.origin==='subagent')continue
       const snapshotQueue=this.queue()
       const old=snapshotQueue.tasks.find(t=>t.sessionId===id)
       const historic=snapshotQueue.tasks.some(t=>t.attempts?.some(a=>a.sessionId===id))
@@ -406,9 +419,22 @@ export class Coordinator {
       }finally{reference.release()}
       if(generation!==this.epoch||this.closed)throw Error('连接已切换，不能沿用旧扫描结果')
       const goal=projection?.goal
+      // U01 identity pre-check before adopt: an interrupted task is never adopted or settled
+      // when another Goal owns the Session, or when no execution-boundary evidence exists.
+      if(old&&old.status==='interrupted'){
+        const mismatch=Boolean(old.goalId&&goal?.id&&old.goalId!==goal.id)
+        if(!old.goalMode||mismatch){
+          await this.trackDetached(id,generation)
+          await this.write(q=>flagForReview(q,old.id,mismatch
+            ?'同一会话正在运行其他 Goal（id 不符），原任务证据保留，请人工核实'
+            :'原会话仍在运行，缺少本次执行边界证据，请人工核实'))
+          found++
+          continue
+        }
+      }
       const taskId=old?.id??crypto.randomUUID()
       await this.write(q=>adopt(q,{
-        sessionId:id,workspaceId:workspace?.workspaceId??'',title:row.title??'',
+        sessionId:id,workspaceId:workspace?.workspaceId??'',title:'',
         goalMode:old?.goalMode??Boolean(goal),goalId:goal?.id,prompt:old?.prompt??goal?.objective??''
       },taskId))
       if(!this.live.has(taskId)){
@@ -421,7 +447,7 @@ export class Coordinator {
     }
     await this.syncTitles()
     if(generation!==this.epoch||this.closed)throw Error('连接已切换，扫描结果无效')
-    this.discovered=true
+    this.directoryFresh=true
     void this.pump()
     return found
   }

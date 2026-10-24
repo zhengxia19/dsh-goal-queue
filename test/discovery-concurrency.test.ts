@@ -62,7 +62,8 @@ function setup(q:QueueState){
     }
   }
   const workspaces={list:{getSnapshot:()=>({items:[{workspaceId:'ws',sessionIds:['existing'],path:'/ws',title:'测试'}]})}}
-  const coordinator=new Coordinator(sessions as never,workspaces as never,host as never,()=>true,undefined,testModels)
+  const directory={async list(){return {rows:[{sessionId:'existing',running:true,updatedAt:1}],syncedAt:Date.now()}}}
+  const coordinator=new Coordinator(sessions as never,workspaces as never,host as never,()=>true,undefined,testModels,directory as never)
   return {host,coordinator,faces,ordinary,summaries,created:()=>created,submitted:()=>submitted}
 }
 

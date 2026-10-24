@@ -17,6 +17,8 @@ export interface Task {
   seenRunning?: boolean; detail?: string; createdAt: number; updatedAt: number
   attempts?: TaskAttempt[]
   titleError?: string
+  /** U01: identity/boundary needs manual review; status stays untouched. */
+  needsReview?: boolean
 }
 export type TaskInput = Pick<Task,'title'|'workspaceId'|'prompt'|'goalMode'> & Partial<Pick<Task,'generateTitle'|'titleMaxChars'|'modelSelection'>>
 export interface QueueState {
@@ -97,6 +99,7 @@ export function decode(value:unknown):QueueSettings|undefined {
       ||(raw.seenRunning!==undefined&&typeof raw.seenRunning!=='boolean')
       ||(raw.detail!==undefined&&typeof raw.detail!=='string')
       ||(raw.titleError!==undefined&&typeof raw.titleError!=='string')
+      ||(raw.needsReview!==undefined&&typeof raw.needsReview!=='boolean')
       ||(raw.attempts!==undefined&&!validAttempts(raw.attempts)))return
     if(typeof raw.sessionId==='string'){
       if(sessionIds.has(raw.sessionId))return
@@ -239,6 +242,8 @@ export function adopt(q:QueueState,data:{sessionId:string;workspaceId:string;tit
   if(current){
     if(current.status==='running'||current.status==='starting')return q
     if(current.status!=='interrupted')return q
+    // Defense in depth (U01): a different Goal on the same Session is never adopted or settled.
+    if(current.goalId&&data.goalId&&current.goalId!==data.goalId)return q
     const ids=[...q.activeIds,current.id]
     return withActive({...q,tasks:q.tasks.map(t=>t.id===current.id
       ?amendAttempt(t,{status:'running',detail:'已重新关联仍在运行的原 Session；队列保持暂停',
@@ -252,6 +257,11 @@ export function adopt(q:QueueState,data:{sessionId:string;workspaceId:string;tit
     createdAt:now,updatedAt:now
   }
   return withActive({...q,tasks:[...q.tasks,{...task,attempts:attemptsOf(task)}]},[...q.activeIds,id])
+}
+/** U01: mark a task for manual review without touching its status or deleting evidence. */
+export function flagForReview(q:QueueState,id:string,detail:string,now=Date.now()):QueueState{
+  if(!q.tasks.some(t=>t.id===id))return q
+  return {...q,tasks:q.tasks.map(t=>t.id===id?amendAttempt(t,{needsReview:true,detail},now):t)}
 }
 export function updateTitle(q:QueueState,id:string,title:string):QueueState{
   if(!title.trim())return q

@@ -12,6 +12,7 @@ import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import { HostQueueSettings } from './settings.ts'
 import { Coordinator } from './coordinator.ts'
+import { HostSessionDirectory } from './directory.ts'
 import { viewStore } from './store.ts'
 import { QueueBoard } from './QueueBoard.tsx'
 import { QueueButton } from './QueueButton.tsx'
@@ -26,7 +27,7 @@ export function apply(ctx: Context): void {
   const models = new HostTaskModels(ctx)
   const coordinator = new Coordinator(ctx.sessions as unknown as ISessions, ctx.workspaces, settings,
     () => connection.generation.getSnapshot() !== undefined,
-    (id) => ctx.uiWorkspace.openSession(id), models)
+    (id) => ctx.uiWorkspace.openSession(id), models, new HostSessionDirectory(ctx))
   coordinator.start()
   ctx.effect(() => { const css = document.createElement('style'); css.dataset.plugin = 'goal-queue'
     css.textContent = styles; document.head.appendChild(css); return () => { css.remove() } }, 'goal-queue:style')
