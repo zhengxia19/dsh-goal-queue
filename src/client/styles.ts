@@ -8,6 +8,7 @@ export const styles = String.raw`
 .gq-root :focus-visible,.gq-side:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#729ffd);outline-offset:2px}
 .gq-head{display:flex;flex-wrap:wrap;flex-shrink:0;justify-content:space-between;align-items:center;gap:15px;border-bottom:1px solid var(--dsw-alias-border-l1,#7774);padding:17px 22px}
 .gq-head h1{font-size:21px;margin:0}.gq-head span{font-size:12px;color:var(--dsw-alias-label-secondary,#aaa)}
+.gq-head .gq-sync{margin-left:10px}
 .gq-actions{display:flex;flex-wrap:wrap;gap:8px}.gq-root button.gq-primary{background:#245fc7!important;color:#fff!important;border-color:#245fc7}
 .gq-root button.gq-primary:hover:not(:disabled){background:#1d4fa8!important;filter:none}
 .gq-root button.gq-primary:disabled{background:#414956!important;color:#d9dee7!important;border-color:#596270;opacity:1;cursor:not-allowed}

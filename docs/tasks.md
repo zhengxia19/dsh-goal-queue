@@ -37,9 +37,9 @@
 | M2 | T2.3 新增 `test/directory-trust.test.ts`（§7.1 ok→fail→ok 链；不引用 `getSnapshot().state`）（0.5d） | 工程师 | P0 | D4 | D4 | 完成 |
 | **QA P0** | QA-1 P0 段复测（U01+U02 链，记录 qa.md）（0.25d） | 质量QA | P0 | D5 | D5 | 待办 |
 | **M3 U03 发现调度（R01/R03）** | | | | | | |
-| M3 | T3.1 `coordinator.ts`：booted→`scheduleDiscovery` 首次只读发现；`runningSignature` 订阅比对触发合并发现；`discoveryQueued` 补扫；connectionReset 重置；`SyncState` + `getSyncState`/`subscribeSync`（0.5d） | 工程师 | P1 | D6 | D6 | 待办 |
-| M3 | T3.2 `QueueBoard.tsx` 订阅 syncState 渲染新鲜度（initializing/scanning/fresh 时间/failed 原因），保留手动刷新（0.25d） | 工程师 | P1 | D6 | D6 | 待办 |
-| M3 | T3.3 新增 `test/discovery-scheduling.test.ts`（§7.2：面板开闭、首次延迟、重连、Subagent 排除、变化不丢）（0.5d） | 工程师 | P1 | D7 | D7 | 待办 |
+| M3 | T3.1 `coordinator.ts`：booted→`scheduleDiscovery` 首次只读发现；`runningSignature` 订阅比对触发合并发现；`discoveryQueued` 补扫；connectionReset 重置；`SyncState` + `getSyncState`/`subscribeSync`（0.5d） | 工程师 | P1 | D6 | D6 | 完成 |
+| M3 | T3.2 `QueueBoard.tsx` 订阅 syncState 渲染新鲜度（initializing/scanning/fresh 时间/failed 原因），保留手动刷新（0.25d） | 工程师 | P1 | D6 | D6 | 完成 |
+| M3 | T3.3 新增 `test/discovery-scheduling.test.ts`（§7.2：面板开闭、首次延迟、重连、Subagent 排除、变化不丢）（0.5d） | 工程师 | P1 | D7 | D7 | 完成 |
 | **M4 U04 占用来源区分（R06）** | | | | | | |
 | M4 | T4.1 `queue.ts` `summarizeQueue` 拆分 starting/observedRunning/externalActivity/occupied；`index.ts` 新 op `openSessionById`（不存在→SESSION_NOT_FOUND）（0.5d） | 工程师 | P1 | D8 | D8 | 待办 |
 | M4 | T4.2 `QueueButton.tsx`「占用 N（启动 X · 运行 Y · 外部 Z）」；Board 新增「外部活动」区，每行「打开」（0.5d） | 工程师 | P1 | D8 | D8 | 待办 |

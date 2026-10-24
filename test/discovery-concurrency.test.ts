@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { Coordinator } from '../src/client/coordinator.ts'
 import { TEST_MODEL, testModels } from './model-fixture.ts'
 import { EMPTY_QUEUE,add,adopt,decode,claim,recover,next,setConcurrency,retry,type QueueSettings,type QueueState } from '../src/queue.ts'
+import { QueueError } from '../src/errors.ts'
 
 const tick=async()=>{for(let i=0;i<16;i++)await new Promise(resolve=>setTimeout(resolve,0))}
 const input=(name:string)=>({workspaceId:'ws',prompt:'Implement '+name,title:name,goalMode:false})
@@ -36,7 +37,7 @@ class Face {
     return {ok:true,value:{matched:true}}
   }
 }
-function setup(q:QueueState){
+function setup(q:QueueState,opts:{failFirstScan?:boolean}={}){
   const host=new Host(q)
   const faces=new Map<string,Face>()
   let created=0,submitted=0
@@ -62,7 +63,15 @@ function setup(q:QueueState){
     }
   }
   const workspaces={list:{getSnapshot:()=>({items:[{workspaceId:'ws',sessionIds:['existing'],path:'/ws',title:'测试'}]})}}
-  const directory={async list(){return {rows:[{sessionId:'existing',running:true,updatedAt:1}],syncedAt:Date.now()}}}
+  // U03: boot schedules discovery automatically, so the trusted directory mirrors the Host truth
+  // (ordinary Face running state) instead of a static row; failFirstScan keeps the
+  // "start blocked until a trustworthy scan" scenario reachable.
+  let dirCalls=0
+  const directory={async list(){
+    dirCalls++
+    if(opts.failFirstScan&&dirCalls===1)throw new QueueError('DIRECTORY_READ_FAILED','模拟首次扫描失败')
+    return {rows:[{sessionId:'existing',running:ordinary.state.running,updatedAt:1}],syncedAt:Date.now()}
+  }}
   const coordinator=new Coordinator(sessions as never,workspaces as never,host as never,()=>true,undefined,testModels,directory as never)
   return {host,coordinator,faces,ordinary,summaries,created:()=>created,submitted:()=>submitted}
 }
@@ -133,7 +142,8 @@ test('empty title remains valid and no synthetic model title command is submitte
 })
 
 test('start is blocked until a trustworthy DPH Session scan has completed',async()=>{
-  const x=setup(add(EMPTY_QUEUE,input('later'),'a'))
+  // U03: boot auto-schedules the first scan; make it fail so the blocked state is observable.
+  const x=setup(add(EMPTY_QUEUE,input('later'),'a'),{failFirstScan:true})
   x.coordinator.start();await tick()
   await assert.rejects(x.coordinator.enable(true),/扫描/)
   assert.equal(x.created(),0)
@@ -186,9 +196,11 @@ test('T06 RED: retry/skip must reject original Session still running',async()=>{
   const x=setup(q)
   x.ordinary.state.running=true
   x.coordinator.start();await tick()
-  await assert.rejects(x.coordinator.retry('old'),/运行|停止/)
-  await assert.rejects(x.coordinator.skip('old'),/运行|停止/)
-  assert.equal(x.host.value.queue.tasks[0]!.status,'interrupted')
+  // U03: the auto discovery reconnects the still-running Session, so manual disposition is
+  // blocked either by the running guard or because the task is no longer unresolved.
+  await assert.rejects(x.coordinator.retry('old'),/运行|停止|处置/)
+  await assert.rejects(x.coordinator.skip('old'),/运行|停止|处置/)
+  assert.notEqual(x.host.value.queue.tasks[0]!.status,'pending','运行中的原 Session 不得被重新排队')
   x.coordinator.dispose()
 })
 

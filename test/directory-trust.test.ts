@@ -62,6 +62,8 @@ function setup(q:QueueState){
 
 test('enable requires a fresh trusted directory read before the first dispatch',async()=>{
   const x=setup(add(add(EMPTY_QUEUE,input('A'),'a'),input('B'),'b'))
+  // U03: boot auto-schedules the first scan; fail it so the un-scanned blocked state persists.
+  x.directory.mode='fail'
   x.coordinator.start();await tick()
   await assert.rejects(x.coordinator.enable(true),/扫描/)
   assert.equal(x.created(),0)

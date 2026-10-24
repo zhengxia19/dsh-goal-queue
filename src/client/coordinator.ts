@@ -18,6 +18,15 @@ interface Active {
   subscriptions:(()=>void)[]
 }
 const err=(e:unknown)=>e instanceof Error?e.message:String(e)
+/** Freshness of the trusted running-Session baseline (design §6.2, U03). */
+export type SyncState =
+  | {state:'initializing'}
+  | {state:'scanning';startedAt:number}
+  | {state:'fresh';syncedAt:number}
+  | {state:'failed';reason:string;failedAt:number}
+/** Sorted signature of running non-subagent Session ids in one trusted snapshot. */
+const rowSignature=(rows:readonly {sessionId:string;running:boolean;origin?:string}[]):string=>
+  rows.filter(r=>r.running&&r.origin!=='subagent').map(r=>r.sessionId).sort().join(',')
 export class Coordinator {
   private chain:Promise<void>=Promise.resolve()
   private live=new Map<string,Active>()
@@ -30,8 +39,23 @@ export class Coordinator {
   private booted=false
   /** A trusted Session-directory read is required before first dispatch (U02). */
   private directoryFresh=false
-  private scanning:Promise<number>|undefined
+  private scanning:Promise<void>|undefined
   private armed=false
+  // U03: discovery is scheduled by boot + list-change observation, never only by UI open.
+  private syncState:SyncState={state:'initializing'}
+  private runningSignature=''
+  private discoveryQueued=false
+  private bootedWaiters:(()=>void)[]=[]
+  private readonly syncListeners=new Set<()=>void>()
+  getSyncState():SyncState{return this.syncState}
+  subscribeSync(listener:()=>void):()=>void{
+    this.syncListeners.add(listener)
+    return ()=>{this.syncListeners.delete(listener)}
+  }
+  private setSyncState(next:SyncState):void{
+    this.syncState=next
+    for(const listener of this.syncListeners)listener()
+  }
   private readonly authorizationListeners=new Set<()=>void>()
   isAuthorized():boolean{return this.armed}
   subscribeAuthorization(listener:()=>void):()=>void{
@@ -68,23 +92,32 @@ export class Coordinator {
         this.controlIntent++
       }
       void this.pump()
-      if(this.settings.getSnapshot().status==='ready')
+      if(this.settings.getSnapshot().status==='ready'){
+        if(this.booted)for(const waiter of this.bootedWaiters.splice(0))waiter()
         for(const id of this.live.keys())void this.observe(id)
+      }
     }))
     // Session titles are owned by DSH; never rename automatically or issue a synthetic prompt.
+    // U03: the same event also compares the running signature so new Sessions are discovered
+    // without opening the panel (R01).
     if(this.sessions.list)this.disposers.push(this.sessions.list.subscribe(()=>{
       void this.syncTitles()
+      this.handleListChange()
     }))
     void this.pump()
   }
   async connectionReset():Promise<void>{
     if(this.closed)return
     this.setArmed(false);this.controlIntent++;this.epoch++;this.releaseAll()
-    this.booted=false;this.directoryFresh=false;void this.pump()
+    this.booted=false;this.directoryFresh=false;this.runningSignature='';this.discoveryQueued=false
+    this.setSyncState({state:'initializing'})
+    void this.pump()
   }
   dispose():void{
     this.closed=true;this.setArmed(false);this.controlIntent++;this.epoch++
-    this.releaseAll();this.directoryFresh=false;for(const stop of this.disposers.splice(0))stop()
+    this.releaseAll();this.directoryFresh=false;this.runningSignature='';this.discoveryQueued=false
+    for(const waiter of this.bootedWaiters.splice(0))waiter()
+    for(const stop of this.disposers.splice(0))stop()
   }
   private queue():QueueState {
     const snapshot=this.settings.getSnapshot()
@@ -171,7 +204,7 @@ export class Coordinator {
     await this.write(q=>{
       if(intent!==this.controlIntent)return q
       if(!this.booted||!this.connected()||generation!==this.epoch)throw Error('连接或恢复未就绪')
-      if(enabled&&this.directory&&!this.directoryFresh)throw Error('请先打开队列完成当前 DPH Session 扫描，再启动队列')
+      if(enabled&&this.directory&&!this.directoryFresh)throw Error('可信的 DPH Session 运行扫描尚未完成，请先刷新运行任务再启动队列')
       if(enabled&&q.tasks.some(t=>UNRESOLVED.includes(t.status)))
         throw Error('存在未确认的历史任务，请先检查原 Session 并处置')
       return {...q,enabled,error:enabled?'':q.error}
@@ -193,6 +226,9 @@ export class Coordinator {
         this.directoryFresh=false
         await this.write(q=>recover(q,'程序启动或连接切换；检查旧 Session 后手工激活队列'))
         this.booted=true
+        for(const waiter of this.bootedWaiters.splice(0))waiter()
+        // U03: the first read-only discovery is scheduled by boot itself, not by opening the panel.
+        this.scheduleDiscovery()
         return
       }
       if(!this.armed||!this.connected()||(this.directory&&!this.directoryFresh))return
@@ -364,16 +400,62 @@ export class Coordinator {
       if(this.observeAgain.delete(id))queueMicrotask(()=>{void this.observe(id)})
     }
   }
-  /** Concurrent refresh clicks share one discovery pass. */
-  discover():Promise<number>{
-    if(this.scanning)return this.scanning
+  /** Concurrent refresh clicks share one discovery pass; boot schedules the first one (U03). */
+  discover():Promise<void>{
+    if(this.closed)return Promise.resolve()
+    if(!this.booted||this.settings.getSnapshot().status!=='ready'){
+      // Pre-boot discovery is not an error: it waits for boot reconciliation, then runs.
+      void this.pump()
+      return this.whenBooted().then(()=>this.discover())
+    }
+    if(this.scanning){this.discoveryQueued=true;return this.scanning}
     const pending=this.scanRunning()
-    this.scanning=pending
-    void pending.then(()=>{if(this.scanning===pending)this.scanning=undefined},()=>{if(this.scanning===pending)this.scanning=undefined})
-    return pending
+    const shared=pending.then(()=>undefined)
+    this.scanning=shared
+    const settle=()=>{
+      if(this.scanning!==shared)return
+      this.scanning=undefined
+      // Changes observed mid-scan must not be lost: one merged follow-up pass.
+      if(this.discoveryQueued){
+        this.discoveryQueued=false
+        void this.discover().catch(e=>console.warn('[goal-queue] queued discovery failed',e))
+      }
+    }
+    void shared.then(settle,settle)
+    return shared
   }
-  /** Discover at UI open. A discovery only observes; it never submits a model command. */
-  private async scanRunning():Promise<number>{
+  /** Boot/list observation schedules discovery without opening the panel; failures land in syncState. */
+  private scheduleDiscovery():void{
+    if(this.closed||!this.booted||!this.connected())return
+    void this.discover().catch(e=>console.warn('[goal-queue] scheduled discovery failed',e))
+  }
+  /** The Host running-set changed since the last trusted snapshot: trigger one merged discovery. */
+  private handleListChange():void{
+    if(this.closed||!this.sessions.list)return
+    const state=this.sessions.list.getSnapshot()
+    const signature=state.ids
+      .filter(id=>{const row=state.byId[id];return row&&row.running&&row.origin!=='subagent'})
+      .sort().join(',')
+    if(signature===this.runningSignature)return
+    this.scheduleDiscovery()
+  }
+  private whenBooted():Promise<void>{
+    if(this.booted)return Promise.resolve()
+    return new Promise<void>(resolve=>{this.bootedWaiters.push(resolve)})
+  }
+  /** One discovery pass; any failure disarms and marks the baseline failed (U02/U03). */
+  private async scanRunning():Promise<void>{
+    this.setSyncState({state:'scanning',startedAt:Date.now()})
+    try{
+      await this.runScan()
+    }catch(e){
+      this.setArmed(false)
+      this.setSyncState({state:'failed',reason:err(e),failedAt:Date.now()})
+      throw e
+    }
+  }
+  /** Discovery only observes; it never submits a model command. */
+  private async runScan():Promise<void>{
     if(!this.connected()||!this.booted||this.settings.getSnapshot().status!=='ready')
       throw Error('Host 尚未就绪')
     if(!this.directory)throw Error('Host 尚未就绪')
@@ -385,14 +467,12 @@ export class Coordinator {
     try{
       snapshot=await this.directory.list()
     }catch(e){
-      this.setArmed(false)
       throw e instanceof QueueError?e:new QueueError('DIRECTORY_READ_FAILED','无法读取运行会话列表：'+err(e))
     }
     if(generation!==this.epoch||!this.connected())throw Error('扫描期间连接已切换，重新打开队列再试')
     // Client-manager refresh only feeds titles/retain; its failure is best-effort degraded.
     try{await this.sessions.refresh()}catch(e){console.warn('[goal-queue] session refresh degraded',e)}
     if(generation!==this.epoch||!this.connected())throw Error('扫描期间连接已切换，重新打开队列再试')
-    let found=0
     for(const row of snapshot.rows){
       const id=row.sessionId as SessionId
       if(this.closed||!this.connected()||generation!==this.epoch)throw Error('扫描过程中连接已断开，请重新检查 Session')
@@ -402,7 +482,6 @@ export class Coordinator {
       const historic=snapshotQueue.tasks.some(t=>t.attempts?.some(a=>a.sessionId===id))
       if((old&&!['interrupted','running','starting'].includes(old.status))||(!old&&historic)){
         await this.trackDetached(id,generation)
-        found++
         continue
       }
       if(old&&this.live.has(old.id))continue
@@ -428,7 +507,6 @@ export class Coordinator {
           await this.write(q=>flagForReview(q,old.id,mismatch
             ?'同一会话正在运行其他 Goal（id 不符），原任务证据保留，请人工核实'
             :'原会话仍在运行，缺少本次执行边界证据，请人工核实'))
-          found++
           continue
         }
       }
@@ -443,13 +521,13 @@ export class Coordinator {
         }
         void this.observe(taskId)
       }
-      found++
     }
     await this.syncTitles()
     if(generation!==this.epoch||this.closed)throw Error('连接已切换，扫描结果无效')
+    this.runningSignature=rowSignature(snapshot.rows)
     this.directoryFresh=true
+    this.setSyncState({state:'fresh',syncedAt:Date.now()})
     void this.pump()
-    return found
   }
   private async syncTitles():Promise<void>{
     if(this.closed||!this.sessions.list||this.settings.getSnapshot().status!=='ready')return

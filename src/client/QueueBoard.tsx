@@ -12,7 +12,7 @@ import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types
 import { resolveTaskModel, type TaskModelSelection } from '../model-policy.ts'
 import { filterTaskRows, type TaskFilter } from './queue-view.ts'
 
-type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open' | 'discover' | 'resumeGoal' | 'setConcurrency' | 'isAuthorized' | 'subscribeAuthorization' | 'openAttempt'> & {refresh: () => Promise<void>; modelCatalog: () => Promise<ModelCatalog>}
+type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open' | 'discover' | 'resumeGoal' | 'setConcurrency' | 'isAuthorized' | 'subscribeAuthorization' | 'getSyncState' | 'subscribeSync' | 'openAttempt'> & {refresh: () => Promise<void>; modelCatalog: () => Promise<ModelCatalog>}
 export type BoardProps = PropsStore<typeof viewStore> & PropsRuntime<'shell.overlay'> &
   PropsHooks<{queueSettings: QueueSettingsSource, workspaces: {
     getSnapshot():WorkspaceSnapshot;subscribe(listener:()=>void):()=>void
@@ -41,7 +41,9 @@ export function QueueBoard(props:BoardProps) {
   const [generateTitle,setGenerateTitle] = useState(false)
   const [titleMaxChars,setTitleMaxChars] = useState(24)
   const [submitting,setSubmitting] = useState(false)
-  const [discovering,setDiscovering] = useState(false)
+  // U03: discovery freshness is Host-scheduled; the board only renders what the Coordinator reports.
+  const syncState = useSyncExternalStore(props.operations.subscribeSync, props.operations.getSyncState)
+  const discovering = syncState.state==='scanning'
   const [catalog,setCatalog] = useState<ModelCatalog>()
   const [catalogError,setCatalogError] = useState('')
   const [selection,setSelection] = useState<TaskModelSelection>()
@@ -63,13 +65,6 @@ export function QueueBoard(props:BoardProps) {
     window.addEventListener('keydown',onKey)
     return ()=>window.removeEventListener('keydown',onKey)
   },[open,props.actions])
-  useEffect(()=>{
-    if(!open || loadingState.status!=='ready')return
-    let alive=true
-    setDiscovering(true)
-    void props.operations.discover().catch(e=>props.actions.error(message(e))).finally(()=>{if(alive)setDiscovering(false)})
-    return ()=>{alive=false}
-  },[open,loadingState.status])
   if(!open) return null
   // Errors must never be misrepresented as a real empty queue. Mutations are not mounted
   // until a fresh, validated Host configuration snapshot has arrived.
@@ -121,12 +116,16 @@ export function QueueBoard(props:BoardProps) {
     const date=new Date(value)
     return Number.isNaN(date.getTime())?'未知':date.toLocaleString()
   }
+  const syncLabel=syncState.state==='fresh'?'运行任务已同步 · '+formatTime(syncState.syncedAt)
+    :syncState.state==='scanning'?'正在扫描运行任务…'
+    :syncState.state==='failed'?'运行任务同步失败：'+syncState.reason
+    :'运行任务基线建立中…'
   return createPortal(<div className="gq-root" role="dialog" aria-modal="true" aria-label="DSH 任务队列">
     <header className="gq-head">
-      <div><h1>DSH 任务队列</h1><span>跨工作区任务 · {summary.pending} 项待执行 · {summary.unresolved} 项异常</span></div>
+      <div><h1>DSH 任务队列</h1><span>跨工作区任务 · {summary.pending} 项待执行 · {summary.unresolved} 项异常</span><span className="gq-sync" role="status">{syncLabel}</span></div>
       <div className="gq-actions">
         <button type="button" onClick={newForm}>添加任务</button>
-        <button type="button" disabled={discovering} onClick={()=>{setDiscovering(true);void change(()=>props.operations.discover().then(()=>{})).finally(()=>setDiscovering(false))}}>{discovering?'扫描中…':'刷新运行任务'}</button>
+        <button type="button" disabled={discovering} onClick={()=>{void change(()=>props.operations.discover())}}>{discovering?'扫描中…':'刷新运行任务'}</button>
         <label>最大并发 <select aria-label="最大并发任务数" value={q.maxConcurrent} onChange={e=>{void change(()=>props.operations.setConcurrency(Number(e.target.value)))}}>
           {Array.from({length:8},(_,i)=>i+1).map(n=><option key={n} value={n}>{n}</option>)}
         </select></label>

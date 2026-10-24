@@ -54,6 +54,8 @@ export function apply(ctx: Context): void {
         openAttempt: coordinator.openAttempt.bind(coordinator),
         isAuthorized: coordinator.isAuthorized.bind(coordinator),
         subscribeAuthorization: coordinator.subscribeAuthorization.bind(coordinator),
+        getSyncState: coordinator.getSyncState.bind(coordinator),
+        subscribeSync: coordinator.subscribeSync.bind(coordinator),
       },
     }),
   }, QueueBoard))
