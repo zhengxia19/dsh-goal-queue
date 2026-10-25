@@ -1,6 +1,6 @@
 # 系统设计文档 — dsh-goal-queue U01–U13 变更实施
 
-- 版本：1.2（2026-10-25；rev.1.2：OBS-7 裁定——`GoalGateway` 措辞改为「不得引入持久 retain/claim/写入」，瞬时 retain 读投影即口径；rev.1.1：修正 U06 动作命名以对齐清单 §5 对照表与 PRD US-06、补 `GoalGateway` 契约、注明 `attempt.phase` schema 提前至 U06 落地）
+- 版本：1.3（2026-10-25；rev.1.3：OBS-9/10/11 裁定——§8.4 状态图失败边按语义区分 failed/interrupted、U07 节补「同次派发可叠加本地 create 事实」口径、动作文案对齐权威命名「修改后重新排队」；rev.1.2：OBS-7 裁定——`GoalGateway` 措辞改为「不得引入持久 retain/claim/写入」，瞬时 retain 读投影即口径；rev.1.1：修正 U06 动作命名以对齐清单 §5 对照表与 PRD US-06、补 `GoalGateway` 契约、注明 `attempt.phase` schema 提前至 U06 落地）
 - 上游：`docs/prd.md`（产品经理）、`docs/项目优化分析与变更清单_2026-10-24.md`（需求基线）
 - 基线：分支 main，HEAD `69b675f`，版本 0.3.2-preview.0，适配 DPH v0.2.1-rc.2
 - 下游：`docs/tasks.md`（项目经理）
@@ -342,11 +342,13 @@ interface ViewState {
 文件：`client/models.ts`（DispatchPhase）、`queue.ts`（claim/setTaskModel/setSessionId/markModelConfirmed/markCommandSubmitted/requeueEdited）、`client/coordinator.ts`（dispatch）、`client/QueueBoard.tsx`
 - 阶段与既有数据同次 CAS 写入（见 6.1）；旧数据 phase=undefined 不伪造。
 - rev.1.1：`attempt.phase` 字段 schema 提前至 U06（M7）落地（`requeueEdited` 可证明性判定需要），U07 只补 dispatch 各阶段写入、不动结构；legacy attempt 无 phase 一律保守拒绝。
-- dispatch 失败分类：
-  - phase ∈ {claimed, precheck} 且无 sessionId → 「已确认未提交，可编辑后重新排队」
-  - phase ∈ {session_created, model_confirmed} → 「会话已创建、命令未提交，需处置原会话」
-  - phase = command_submitted → 「命令提交状态未知，保守处理，不自动重发」
-- 「编辑后重新排队」仅在 `canRequeueEdited` 时出现。
+- dispatch 失败分类（任务终态按语义区分，rev.1.3 · OBS-9）：
+  - phase ∈ {claimed, precheck} 且无 sessionId 且无本地 create 事实 → 任务 `failed`，「已确认未提交，可修改后重新排队」
+  - phase ∈ {session_created, model_confirmed} → 任务 `interrupted`，「会话已创建、命令未提交，需处置原会话」
+  - phase = command_submitted → 任务 `interrupted`，「命令提交状态未知，保守处理，不会自动重发」（挂 `SUBMISSION_UNKNOWN` 码）
+- rev.1.3 · OBS-10：同次派发内可叠加本地 create 事实——`sessions.create()` 成功但 `setSessionId` 持久化失败时，持久 phase 停在 precheck，但本地确知 Session 已建（孤儿 Session 需处置，对应 B2），此时按「会话已创建」分类、任务记 `interrupted`，不得按 claimed/precheck 放行重排。
+- `SUBMISSION_UNKNOWN` 等派发分类码的口径（rev.1.3 · OBS-11）：错误码挂在抛错/分类对象上供程序判定与测试断言；UI 展示人读文案（failure detail），不要求渲染码本身——现实现即口径。
+- 「修改后重新排队」仅在 `canRequeueEdited` 时出现（rev.1.3 对齐权威命名）。
 - 验收映射：U07 链（§7.7）。
 
 ### U08 工作区显式选择（R07）
@@ -467,11 +469,12 @@ stateDiagram-v2
     session_created --> model_confirmed: markModelConfirmed
     model_confirmed --> command_submitted: markCommandSubmitted 提交前
     command_submitted --> [*]: 派发成功
-    claimed --> failed: 可证明未提交 → 可编辑重排
-    precheck --> failed: 同上
-    session_created --> failed: 会话已建命令未提交 → 需处置
-    model_confirmed --> failed: 同上
-    command_submitted --> failed: 提交状态未知 → 不自动重发
+    claimed --> failed: 可证明未提交 → 可修改后重新排队
+    precheck --> failed: 同上（无本地 create 事实）
+    session_created --> interrupted: 会话已建命令未提交 → 需处置
+    model_confirmed --> interrupted: 同上
+    command_submitted --> interrupted: 提交状态未知 → 不自动重发
+    precheck --> interrupted: create 已成功但 setSessionId 持久化失败（本地 create 事实，rev.1.3）
 ```
 
 ## 9. 项目文件结构（★=新增，其余为修改）
