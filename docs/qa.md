@@ -103,4 +103,51 @@
 
 ---
 
+## QA-3：M7/U06 复测（查看并处理入口 + 命名修正）
+
+- **测试标题**：U06 处置入口复测——只读核实（inspect）、六动作可用性、可证明重排队（requeueEdited）、权威命名（清单 §5）
+- **测试范围**：U06（`client/inspection.ts`、`coordinator.ts` inspect/goalOf/requeueEdited/enable 挂码、`QueueBoard.tsx` 核实面板与六动作、`queue.ts` `requeueEdited`、`attempt.phase` schema 提前）；命名修正 `4b39ad0`（design rev.1.1 / 清单 §5 / PRD US-06）；PRD §7 链 6 的 U06 部分与链 7 的既有部分（CAS/回包丢失涉 U07 未实施项留待 QA-4）
+- **优先级**：P1
+- **被测提交**：`4b39ad0`（命名修正）、`855ed0f`（design rev.1.1）、`d672a4a`（U06/M7）；QA-2 基线 `757eb8c`；工作树干净
+- **复测日期**：2026-10-25
+- **验证方式**：独立重跑 `typecheck` / `npm test` / `build`；原探针 R01–R07 复核；代码对照 design rev.1.1 §5/§6.1/§6.2/§6.4/§U06 逐项审查；命名对照清单 §5 对照表与 PRD US-06 grep 复核
+
+### 测试用例表
+
+| 测试编号 | 关联用户故事 | 前置条件 | 测试步骤 | 预期结果 | 实际结果 | 状态 |
+|---|---|---|---|---|---|---|
+| QA3-01 | US-06 | HEAD=4b39ad0，工作树干净 | `npm run typecheck` | 无类型错误 | 通过 | ✅ 通过 |
+| QA3-02 | US-06 | 同上 | `npm test` 全量 | 128/128 全绿（123 + 新增 board-interactions 5 项） | tests 128 / pass 128 / fail 0 | ✅ 通过 |
+| QA3-03 | US-06 | 同上 | `npm run build` | 构建成功 | CJS+ESM 完成 | ✅ 通过 |
+| QA3-04 | 回归 | 同上 | 原探针 R01–R07 | 7/7 PASS 无回归 | 7/7 PASS | ✅ 通过 |
+| QA3-05 | US-06 | interrupted 任务，原 Session 存在已停止 | 连续两次 `inspect`；再 inspect 不存在任务 | 两次结果 deep-equal；`host.set` 写次数 0（零写入、不占名额）；未知任务抛 `TASK_NOT_FOUND` 挂码 | 断言全过 | ✅ 通过 |
+| QA3-06 | US-06（链7） | 原 Session 仍在运行 | inspect → retry → skip | canRetry/canSkip/canResume=false，reason「原会话仍在运行，请先处置」+ 运行警告；retry/skip 抛 `SESSION_STILL_RUNNING`（design §5 既有码）；任务状态不变 | 断言全过；coordinator.ts:181 挂码 | ✅ 通过 |
+| QA3-07 | US-06 | 两个 interrupted Goal 任务，各自 Session 空闲、Goal phase=paused | inspect → resumeGoal → 重复 resume → resume 第二个 | 恰好一次 claim（activeIds=['old']）、`/goal resume` 恰好提交一次；重复恢复拒绝；第二个抛 `CAPACITY_FULL`；inspect 显示「当前执行名额已被占用」 | 断言全过（原子恢复 claim 不退化） | ✅ 通过 |
+| QA3-08 | US-06/US-07 | failed 任务，最后 attempt phase=precheck 无 sessionId | inspect → requeueEdited | canRequeueEdited=true；回 pending、title 更新、sessionId 清空、attempts 证据保留（phase 不变） | 断言全过 | ✅ 通过 |
+| QA3-09 | US-07 | 最后 attempt phase=command_submitted | inspect + requeueEdited | 两者均拒：inspect canRequeueEdited=false；写路径抛 `REQUEUE_EDIT_NOT_PROVEN` | 断言全过 | ✅ 通过 |
+| QA3-10 | US-07/B4 | legacy attempt 无 phase | inspect + requeueEdited | 保守拒绝，reason「派发阶段未记录，无法证明命令未提交」；不伪造 phase | 断言全过；decode 对 phase 校验（非法拒、undefined 允许） | ✅ 通过 |
+| QA3-11 | US-06 | 代码审查 | `queue.requeueEdited` 对照 design §6.1 | 签名 `(q,id,input,now)` 一致；守卫 UNRESOLVED + 最后 attempt 无 sessionId + phase∈{claimed,precheck}；保留 attempts、清 goalId/sessionId；额外 `!activeIds.includes(id)` 为更严守卫 | 一致 | ✅ 通过 |
+| QA3-12 | US-06 | 代码审查 | `goalOf`（GoalGateway）对照 design §6.4 rev.1.1 | 走 `faceOf('goal')` 只读快照；断连/降级读/epoch 变化返回 undefined；不 claim 名额、不打开会话；见 OBS-7（retain 措辞） | 行为符合契约意图 | ✅ 通过 |
+| QA3-13 | US-06 | 代码审查 + 静态断言 | Board 六动作命名对照清单 §5 / PRD US-06 / design rev.1.1 | 「查看原会话/继续原目标/重试此任务（新会话）/跳过此任务/修改后重新排队/删除记录」全部在位；旧命名「恢复原 Goal/编辑后重新排队」反向断言防回流；QA grep 复核 src 无旧命名 | 一致；`4b39ad0` 修正到位 | ✅ 通过 |
+| QA3-14 | US-06 | 代码审查 | notice 文案与下一步说明 | 跳过→「已跳过，队列仍暂停。点击“启动队列”继续待执行任务。」；重试→「已重新排队，点击“启动队列”执行」；恢复→「原 Goal 已恢复，占用一个执行名额」（design 335 行固定文案，非按钮标签，保留正确）；重排队/删除 notice 到位；不可用动作渲染理由 | 与 design §U06 逐条一致 | ✅ 通过 |
+| QA3-15 | US-06 | 代码审查 | 重复点击防护 | `act` 以 acting 重入守卫；inspect 面板再点关闭；modal submitting 守卫；`window.confirm` 全仓 Board 移除（静态断言） | 到位 | ✅ 通过 |
+| QA3-16 | US-06 | 代码审查 | interrupted 非 goalMode 标签 | 显示「待核实」（不再「待人工恢复」）；goalMode 仍「待人工恢复」 | QueueBoard.tsx:26 符合 | ✅ 通过 |
+| QA3-17 | OBS-6 | enable() 前置检查 | 挂码核验 | `NOT_BOOTED`/`CONNECTION_CHANGED`/`UNRESOLVED_BLOCKING` 挂码、文案保留；directoryFresh 前置仍普通 Error——design §6.2 仅要求上述三码，合规 | OBS-6 闭环 | ✅ 通过 |
+| QA3-18 | US-07 | schema 审查 | `attempt.phase` 提前至 M7 | 字段 + `PHASES` 校验入 decode；design rev.1.1 §U07 认可「schema 提前、U07 只补写入不动结构」 | 一致 | ✅ 通过 |
+| QA3-19 | 链6/7 | 范围判定 | PRD §7 链 6/7 映射 | 链 6：处置、重复点击已验；分类切换既有过滤测试无回归；表单错误定位（U08）、标题模式切换（U09）留待 M8/M9 后整段 QA-3。链 7：运行拒绝、恢复一次执行权、重连撤销授权已验；CAS/回包丢失不重发涉 U07 未实施，留待 QA-4 | 按排期留待项均有归属 | ✅ 记录 |
+
+### 结论
+
+**QA-3（M7/U06 + 命名修正）通过**。inspect 只读幂等零写入、六动作可用性与理由、恢复原子 claim 不退化、可证明性判定与 legacy 保守拒绝、权威命名与 notice 下一步文案全部符合 design rev.1.1 与清单 §5；OBS-6 闭环。无阻塞 bug。
+
+### 观察项（非阻塞）
+
+| 编号 | 级别 | 内容 | 建议 |
+|---|---|---|---|
+| OBS-7 | 低 | `goalOf` 经 `sessions.retain`（acquire→读投影→finally release）读取 Goal 投影；design §6.4 rev.1.1 措辞「不得引入写入、claim 或 retain」按字面则投影不可读（retain 是访问 projections 的唯一公开途径）。实现为瞬时只读获取、即取即放、零写入、不占名额，符合契约意图 | 请架构师把措辞修订为「不得引入持久 retain / claim / 写入」，或确认现实现即口径 |
+| OBS-8 | 低 | `inspectTask` 的 slotTaken 用 `activeIds.length + sessionActivity.length >= maxConcurrent` 直加，未走 `summarizeQueue` 去重口径；理论上自有会话双计会虚报「名额已被占用」（保守方向，且 trackSessionActivity 已对自有运行会话去重，实际难触发） | U07 实施时统一改用 `summarizeQueue().occupied`，与派发闸门同口径 |
+| OBS-5 | 跟踪中 | 执行历史行不显示 attempt 级 titleError/detail（QA-2 提出），架构师未回复 | 不阻塞，随后续里程碑确认 |
+
+---
+
 （以下段落由后续复测追加）
