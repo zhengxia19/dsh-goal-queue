@@ -55,9 +55,9 @@
 | M6 | T6.3 新增 `test/serial-dispatch.test.ts`（旧数据归一；一名额被占 next 返回 undefined；claimGoalResume 占名额后 CAPACITY_FULL；多 pending 仅第一个 claim；释放后第二个才 claim；另含并发点击、连接重置恢复、无并发配置入口断言）（0.5d） | 工程师 | P1 | D13 | D13 | 完成 |
 | **QA P1a** | QA-2 P1a 段复测（U03/U04/U05/U13 链，含串行验收例）（0.5d） | 质量QA | P1 | D14 | D14 | 待办 |
 | **M7 U06 统一处理入口** | | | | | | |
-| M7 | T7.1 新增 `src/client/inspection.ts`：`inspectTask` 只读核实（会话存在/运行/Goal 匹配/各动作可用性+理由）（0.5d） | 工程师 | P1 | D15 | D15 | 待办 |
-| M7 | T7.2 `coordinator.ts` 加 `inspect`/`requeueEdited`；Board「查看并处理」面板：动作命名按清单 §5 对照表、去 `window.confirm`、notice 说明下一步；interrupted 非 goalMode 标「待核实」（0.75d） | 工程师 | P1 | D16 | D16 | 待办 |
-| M7 | T7.3 新增 `test/board-interactions.test.ts`（§7.6 U06 部分：重复点击、运行中拒绝处置、恢复 claim 不退化）（0.5d） | 工程师 | P1 | D17 | D17 | 待办 |
+| M7 | T7.1 新增 `src/client/inspection.ts`：`inspectTask` 只读核实（会话存在/运行/Goal 匹配/各动作可用性+理由）（0.5d） | 工程师 | P1 | D15 | D15 | 完成 |
+| M7 | T7.2 `coordinator.ts` 加 `inspect`/`requeueEdited`；Board「查看并处理」面板：动作命名按清单 §5 对照表、去 `window.confirm`、notice 说明下一步；interrupted 非 goalMode 标「待核实」（0.75d） | 工程师 | P1 | D16 | D16 | 完成 |
+| M7 | T7.3 新增 `test/board-interactions.test.ts`（§7.6 U06 部分：重复点击、运行中拒绝处置、恢复 claim 不退化）（0.5d） | 工程师 | P1 | D17 | D17 | 完成 |
 | **M8 U07 派发阶段与可证明重排** | | | | | | |
 | M8 | T8.1 `models.ts` `DispatchPhase`；`queue.ts`：`claim` 记 phase、`setTaskModel`/`setSessionId` 增 phase 参同次 CAS、新增 `markModelConfirmed`/`markCommandSubmitted`/`requeueEdited`（不可证明抛 REQUEUE_EDIT_NOT_PROVEN）（0.75d） | 工程师 | P1 | D18 | D19 | 待办 |
 | M8 | T8.2 `coordinator.dispatch` 失败三分类（确认未提交/会话已建命令未提交/提交未知）+ Board 分类展示；旧数据 phase=undefined 不伪造（0.5d） | 工程师 | P1 | D19 | D19 | 待办 |

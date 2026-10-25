@@ -4,11 +4,16 @@ import { isModelSelection, type TaskModelSelection } from './model-policy.ts'
 export const VERSION = 1 as const
 export type TaskStatus = 'pending'|'starting'|'running'|'completed'|'blocked'|'failed'|'interrupted'|'skipped'
 export type TaskSource = 'queue'|'discovered'
+/** U07 dispatch phases; U06's provability check reads them. Undefined = legacy, never fabricated. */
+export type AttemptPhase = 'claimed'|'precheck'|'session_created'|'model_confirmed'|'command_submitted'
+export const PHASES: readonly AttemptPhase[] = ['claimed','precheck','session_created','model_confirmed','command_submitted']
 export interface TaskAttempt {
   id:string; status:TaskStatus; sessionId?:string; goalId?:string;
   seenRunning?:boolean; detail?:string; createdAt:number; updatedAt:number
   /** U05: title failure of that execution, archived from the task at the next claim. */
   titleError?:string
+  /** Written by dispatch in the same CAS (U07); absent for legacy attempts. */
+  phase?:AttemptPhase
 }
 export interface Task {
   id: string; workspaceId: string; title: string; prompt: string; goalMode: boolean
@@ -56,7 +61,8 @@ function validAttempts(raw:unknown):raw is TaskAttempt[]{
       ||(a.goalId!==undefined&&typeof a.goalId!=='string')
       ||(a.seenRunning!==undefined&&typeof a.seenRunning!=='boolean')
       ||(a.detail!==undefined&&typeof a.detail!=='string')
-      ||(a.titleError!==undefined&&typeof a.titleError!=='string'))return false
+      ||(a.titleError!==undefined&&typeof a.titleError!=='string')
+      ||(a.phase!==undefined&&!PHASES.includes(a.phase as AttemptPhase)))return false
     seen.add(a.id);return true
   })
 }
@@ -316,4 +322,24 @@ export function skip(q:QueueState,id:string):QueueState{
   if(!q.tasks.some(t=>t.id===id&&UNRESOLVED.includes(t.status)))throw Error('只能手工跳过未处置的异常任务')
   return {...q,tasks:q.tasks.map(t=>t.id===id&&UNRESOLVED.includes(t.status)
     ?amendAttempt(t,{status:'skipped',detail:'用户确认跳过；不代表执行完成'},Date.now()):t)}
+}
+/** U06/U07 (design §6.1): edit-and-requeue only when the last attempt provably never submitted. */
+export function requeueEdited(q:QueueState,id:string,input:TaskInput,now=Date.now()):QueueState{
+  const task=q.tasks.find(t=>t.id===id)
+  if(!task)throw new QueueError('TASK_NOT_FOUND','任务已不存在')
+  const attempts=attemptsOf(task)
+  const last=attempts[attempts.length-1]
+  const proven=UNRESOLVED.includes(task.status)&&!q.activeIds.includes(id)
+    &&last!==undefined&&!last.sessionId&&(last.phase==='claimed'||last.phase==='precheck')
+  if(!proven)throw new QueueError('REQUEUE_EDIT_NOT_PROVEN','无法证明命令未提交，不能编辑重排队')
+  if(!input.workspaceId||!input.prompt.trim())throw Error('工作区和任务说明不能为空')
+  const normalized=titleOptions(input)
+  // Back to pending with the edited input; the attempt history (and its evidence) is retained.
+  return {...q,tasks:q.tasks.map(t=>t.id===id?{
+    ...t,...input,...normalized,modelSelection:input.modelSelection,
+    title:input.title.trim(),prompt:input.prompt.trim(),
+    status:'pending' as const,source:'queue' as const,sessionId:undefined,goalId:undefined,
+    seenRunning:false,detail:'编辑后重新排队：已证明命令未提交，下次派发将创建新 Session',
+    updatedAt:now,attempts
+  }:t)}
 }

@@ -40,4 +40,7 @@ export const styles = String.raw`
 .gq-external-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12px;margin-top:8px}
 .gq-external-row span{overflow-wrap:anywhere}
 .gq-external-row button{font-size:12px}
+.gq-inspect{margin-top:10px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#7775);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#222);display:flex;flex-direction:column;gap:6px}
+.gq-inspect-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.gq-inspect-actions button{font-size:12px}
 `

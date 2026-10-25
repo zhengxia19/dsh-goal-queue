@@ -1,6 +1,6 @@
 /** Host-validated durable settings section. Only data, never a duplicate goal database. */
 import z from '@deepseek-ai/schemastery'
-import { STATES } from './queue.ts'
+import { PHASES, STATES } from './queue.ts'
 export const queueSchema = z.object({
   version: z.const(1).default(1).volatile(),
   queue: z.object({
@@ -28,6 +28,7 @@ export const queueSchema = z.object({
         seenRunning:z.union([z.boolean(),z.const(undefined)]),
         detail:z.union([z.string(),z.const(undefined)]),
         titleError:z.union([z.string(),z.const(undefined)]),
+        phase:z.union([...PHASES.map(p=>z.const(p)),z.const(undefined)]),
         createdAt:z.number(),updatedAt:z.number(),
       })),z.const(undefined)]),
       createdAt: z.number(), updatedAt: z.number(),

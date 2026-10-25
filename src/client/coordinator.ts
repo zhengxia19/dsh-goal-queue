@@ -8,7 +8,8 @@ import { confirmTaskModel, type TaskModels } from './models.ts'
 import { resolveTaskModel, sameModel } from '../model-policy.ts'
 import { QueueError } from '../errors.ts'
 import type { SessionDirectory, DirectorySnapshot } from './directory.ts'
-import { UNRESOLVED,add,adopt,claim,decode,edit,flagForReview,move,next,recover,remove,retry,
+import { inspectTask, type GoalGateway, type GoalRef, type TaskInspection } from './inspection.ts'
+import { UNRESOLVED,add,adopt,claim,decode,edit,flagForReview,move,next,recover,remove,requeueEdited,retry,
   setSessionId,setTaskModel,skip,updateActive,updateTitle,releaseUnsubmittedClaim,claimGoalResume,trackSessionActivity,releaseSessionActivity,type QueueState,type Task,type TaskInput } from '../queue.ts'
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
   interface SessionReferenceSourceMap { goalQueue: unknown }
@@ -27,7 +28,7 @@ export type SyncState =
 /** Sorted signature of running non-subagent Session ids in one trusted snapshot. */
 const rowSignature=(rows:readonly {sessionId:string;running:boolean;origin?:string}[]):string=>
   rows.filter(r=>r.running&&r.origin!=='subagent').map(r=>r.sessionId).sort().join(',')
-export class Coordinator {
+export class Coordinator implements GoalGateway {
   private chain:Promise<void>=Promise.resolve()
   private live=new Map<string,Active>()
   private detachedActivity=new Map<string,{reference:SessionReference;stop:()=>void}>()
@@ -176,7 +177,8 @@ export class Coordinator {
       await ref.ready
       if(generation!==this.epoch||!this.connected())throw Error('连接切换，原 Session 状态不可核实')
       const current=ref.binding.session.getSnapshot()
-      if(current.running)throw Error('原 Session '+task.sessionId+' 仍在运行，不能重新排队或跳过')
+      // design §5: SESSION_STILL_RUNNING is the contract code for retry/skip against a live Session.
+      if(current.running)throw new QueueError('SESSION_STILL_RUNNING','原 Session '+task.sessionId+' 仍在运行，不能重新排队或跳过')
       await this.write(q=>{
         if(generation!==this.epoch||!this.connected()||ref.binding.session.getSnapshot().running)
           throw Error('原 Session 状态已经改变，请重新检查')
@@ -205,21 +207,49 @@ export class Coordinator {
     }
     this.openSession?.(sessionId as SessionId)
   }
+  /** U06: read-only verification before a disposition; zero writes, never claims a slot. */
+  async inspect(id:string):Promise<TaskInspection>{
+    if(!this.queue().tasks.some(t=>t.id===id))throw new QueueError('TASK_NOT_FOUND','任务已不存在')
+    if(!this.directory)throw new QueueError('DIRECTORY_READ_FAILED','无法核实：Host 会话目录不可用')
+    return inspectTask(id,{queue:()=>this.queue(),directory:this.directory,goals:this})
+  }
+  /** GoalGateway: read the Goal projection of an existing Session; never opens or replays it. */
+  async goalOf(sessionId:string):Promise<GoalRef|undefined>{
+    if(this.closed||!this.connected())return undefined
+    const generation=this.epoch
+    try{
+      const ref=this.sessions.retain(sessionId as SessionId,{source:'goalQueue'})
+      try{
+        await ref.ready
+        if(generation!==this.epoch||this.closed)return undefined
+        const raw=ref.binding.session.projections.faceOf('goal').getSnapshot()
+        const goal=raw&&typeof raw==='object'&&'goal' in raw
+          ?(raw as {goal?:{id:string;phase:string}}).goal:undefined
+        return goal?{id:goal.id,phase:goal.phase}:undefined
+      }finally{ref.release()}
+    }catch{return undefined}
+  }
+  /** U06: edit-and-requeue; provability is re-checked at write time, epoch/connected via saveInput. */
+  requeueEdited(id:string,input:TaskInput):Promise<void>{
+    return this.saveInput(input,normalized=>this.write(q=>requeueEdited(q,id,normalized)))
+  }
   async enable(enabled:boolean):Promise<void>{
     const intent=++this.controlIntent
     if(!enabled)this.setArmed(false)
     const generation=this.epoch
     await this.write(q=>{
       if(intent!==this.controlIntent)return q
-      if(!this.booted||!this.connected()||generation!==this.epoch)throw Error('连接或恢复未就绪')
+      // OBS-6 (design §5/§6.2): enable pre-checks carry their contract codes; wording kept.
+      if(!this.booted)throw new QueueError('NOT_BOOTED','连接或恢复未就绪')
+      if(!this.connected()||generation!==this.epoch)throw new QueueError('CONNECTION_CHANGED','连接或恢复未就绪')
       if(enabled&&this.directory&&!this.directoryFresh)throw Error('可信的 DPH Session 运行扫描尚未完成，请先刷新运行任务再启动队列')
       if(enabled&&q.tasks.some(t=>UNRESOLVED.includes(t.status)))
-        throw Error('存在未确认的历史任务，请先检查原 Session 并处置')
+        throw new QueueError('UNRESOLVED_BLOCKING','存在未确认的历史任务，请先检查原 Session 并处置')
       return {...q,enabled,error:enabled?'':q.error}
     })
     if(enabled&&intent===this.controlIntent){
       if(this.closed||generation!==this.epoch||!this.connected()||!this.booted)
-        throw Error('连接已切换；请重新手工启用')
+        throw new QueueError('CONNECTION_CHANGED','连接已切换；请重新手工启用')
       this.setArmed(true);void this.pump()
     }
   }
