@@ -1,6 +1,6 @@
 # 系统设计文档 — dsh-goal-queue U01–U13 变更实施
 
-- 版本：1.3（2026-10-25；rev.1.3：OBS-9/10/11 裁定——§8.4 状态图失败边按语义区分 failed/interrupted、U07 节补「同次派发可叠加本地 create 事实」口径、动作文案对齐权威命名「修改后重新排队」；rev.1.2：OBS-7 裁定——`GoalGateway` 措辞改为「不得引入持久 retain/claim/写入」，瞬时 retain 读投影即口径；rev.1.1：修正 U06 动作命名以对齐清单 §5 对照表与 PRD US-06、补 `GoalGateway` 契约、注明 `attempt.phase` schema 提前至 U06 落地）
+- 版本：1.4（2026-10-25；rev.1.4：OBS-12 裁定——模型副作用提示认可现文案「派发时设置模型也会更新 Host 默认模型…」，design 引句对齐；rev.1.3：OBS-9/10/11 裁定——§8.4 状态图失败边按语义区分 failed/interrupted、U07 节补「同次派发可叠加本地 create 事实」口径、动作文案对齐权威命名「修改后重新排队」；rev.1.2：OBS-7 裁定——`GoalGateway` 措辞改为「不得引入持久 retain/claim/写入」，瞬时 retain 读投影即口径；rev.1.1：修正 U06 动作命名以对齐清单 §5 对照表与 PRD US-06、补 `GoalGateway` 契约、注明 `attempt.phase` schema 提前至 U06 落地）
 - 上游：`docs/prd.md`（产品经理）、`docs/项目优化分析与变更清单_2026-10-24.md`（需求基线）
 - 基线：分支 main，HEAD `69b675f`，版本 0.3.2-preview.0，适配 DPH v0.2.1-rc.2
 - 下游：`docs/tasks.md`（项目经理）
@@ -368,7 +368,7 @@ interface ViewState {
 ### U10 表单顺序与局部错误
 文件：`client/QueueBoard.tsx`
 - 顺序：任务说明 → 工作区 → 执行方式 → 模型与推理 → 标题 → 高级选项。
-- 字段错误内联（formErrors）；模型副作用一行提示「执行时设置模型会同时更新 Host 默认模型」。
+- 字段错误内联（formErrors）；模型副作用一行提示「派发时设置模型也会更新 Host 默认模型；恢复已有 Session 不重新设置模型。」（rev.1.4 · OBS-12 裁定：认可现文案——「派发时」更贴插件术语，design 引句同步对齐。）
 - 超长提示：「任务内容过长，无法再生成标题；可关闭 AI 标题后保存」（不建议删正文）。
 - 实现术语（CAS/投影/token/UTF-16）移入 help/details。
 
