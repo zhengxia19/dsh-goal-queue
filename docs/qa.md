@@ -415,7 +415,27 @@
 
 **QA-10 通过**。根因定位准确（5 个面板 useState 位于提前 return 之后，首开 25→30 hook 抛 React #310），修复最小且不触契约，挂载回归红绿独立复现。devDeps 新增 jsdom/zustand/immer/@types/jsdom 仅测试用，不入产物依赖。
 
-**在途项**：工程师工作区尚有未提交的第三个 mount 用例（error→ready 重试 + 面板开合跨分支 hook 一致性），QA 侧跑测时该用例绿（3/3），待其提交后并入台账。
+**在途项**：工程师工作区尚有未提交的第三个 mount 用例（error→ready 重试 + 面板开合跨分支 hook 一致性），QA 侧跑测时该用例绿（3/3），待其提交后并入台账。→ 已并入，见下方 QA-10b。
+
+**提醒老板**：需重启 DPH Desktop 加载新 bundle（`lib/client.js` 已重建）后继续 C1–C9。
+
+---
+
+## QA-10b：第三 mount 用例并入复测（`3944e2e`）
+
+- **测试标题**：QA-10b error↔ready 跨分支开合防回流用例并入复测
+- **被测提交**：`3944e2e`（test(client)，新增第三挂载用例 + 断言改轮询）
+- **优先级**：P1（防回流加固，不触产品代码）
+
+| 测试编号 | 关联 | 前置条件 | 测试步骤 | 预期结果 | 实际结果 | 状态 |
+|---|---|---|---|---|---|---|
+| QA10b-01 | 全量门禁 | HEAD `3944e2e` | 独立跑三命令 + 探针 | 全绿 | typecheck ✅、**143/143**、build ✅、探针 7/7 | ✅ |
+| QA10b-02 | 红绿复现（三用例） | `git checkout e9260d1^ -- src/client/QueueBoard.tsx` + 重建 bundle | 单跑 board-mount | 三红，报错逐字 React #310 | 3 fail，逐字 `Error: Rendered more hooks than during the previous render.` + `slot entry crashed in 'shell.overlay'` | ✅ |
+| QA10b-03 | 修复有效 | `git checkout e9260d1 -- src/client/QueueBoard.tsx` + 重建 bundle | 单跑 board-mount | 三绿 | 3/3 通过，工作区恢复干净 | ✅ |
+| QA10b-04 | 用例内容审计 | `git show 3944e2e` | 核对第三用例断言 | 覆盖 error 快照→开→关→重开→「重试读取配置」→ready 全转换，每步断言无 slot 崩溃 | 属实：按钮报「(配置错误)」、错误面板开合两次、重试后面板保持挂载显示「队列为空」，`[data-slot-error]` 计数 0 + slot crash 错误列表为空 | ✅ |
+| QA10b-05 | 防 flaky | 固定 sleep 改轮询 `waitFor`（10ms 间隔、3s 上限） | board-mount 连跑三轮 | 三轮稳定全绿 | 3/3、3/3、3/3，无抖动 | ✅ |
+
+**QA-10b 通过**。第三用例走的是 Chief 要求的 error↔ready 反复开合路径，轮询断言消除负载下时序抖动；红绿复现法（回退被测文件+重建 bundle）三红/三绿逐字复核成立。挂载盲区现有 3 用例守卫（ready 首击、open 时 loading→ready、error→ready 跨分支）。
 
 **提醒老板**：需重启 DPH Desktop 加载新 bundle（`lib/client.js` 已重建）后继续 C1–C9。
 
