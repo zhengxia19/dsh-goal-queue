@@ -441,4 +441,12 @@
 
 ---
 
+## 观察项登记：OBS-13（实机走查噪音，非缺陷）
+
+| 编号 | 现象 | 归属判定 | QA 独立核验 | 处置 |
+|---|---|---|---|---|
+| OBS-13 | 实机控制台 `GET dsh-app://app/plugins/events net::ERR_FAILED 200 (OK)` 刷屏 | 宿主既有行为：DPH 插件热更新系统的 SSE 长连接（`/plugins/events`），Electron 自定义协议下流式响应被中止的常见噪音（窗口刷新/连接重建时出现）；与 React #310 开窗缺陷无关 | ① 我方 `src/` 全量 grep `fetch\|EventSource\|plugins/events\|XMLHttpRequest` 零命中——goal-queue 插件从不发网络请求；② 独立扫 `app.asar`：`plugins/events` 命中 11 处，与工程师计数一致，抽样原文为宿主热重载文档（"The Host half watches each package's stamped entry artifact and serves `/plugins/events`…"） | 非缺陷、不修、不扩大修复面；若重启后仍刷屏且影响实机走查判读，再单独交 Chief 定夺 |
+
+---
+
 （以下段落由后续复测追加）
