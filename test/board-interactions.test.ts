@@ -153,3 +153,21 @@ test('the board names actions accurately and never uses window.confirm',()=>{
   // design rev.1.1: 清单 §5 is the authoritative naming; the rev.1.0 wording must not return.
   assert.ok(!src.includes('恢复原 Goal')&&!src.includes('编辑后重新排队'),'authoritative action naming per 清单 §5')
 })
+test('U08: the form never guesses a workspace; the save button speaks the queue state',()=>{
+  const src=readFileSync(new URL('../src/client/QueueBoard.tsx',import.meta.url),'utf8')
+  // No first-item default: with several workspaces (Chinese paths included) the first must not be preselected.
+  assert.ok(!src.includes('workspaces.items[0]'),'no guessed default workspace')
+  assert.match(src,/newForm[^]*?setWorkspaceId\(''\)/,'newForm starts with an explicit empty workspace choice')
+  // Saving without a choice fails inline with the contract wording instead of a native bubble.
+  assert.ok(src.includes("formError('workspace','请选择工作区')"),'save validates the workspace choice')
+  assert.ok(src.includes('{formErrors.workspace&&<p role="alert">'),'the workspace error renders inline on its field')
+  assert.ok(!src.includes('<select required value={workspaceId}'),'no native required on the workspace select')
+  // The save stays reachable so the inline error can fire; other gates remain.
+  assert.ok(src.includes('disabled={submitting||!catalog'),'save is gated without a workspace pre-check')
+  // Save button copy follows the authorization state per design §U08.
+  for(const phrase of ['加入运行中的队列','加入后将按可用名额执行','等待新任务，加入后执行','保存任务'])
+    assert.ok(src.includes(phrase),'QueueBoard must contain: '+phrase)
+  assert.ok(src.includes("queueEnabled?(summary.pending===0?'等待新任务，加入后执行':'加入运行中的队列'):'保存任务'"),'button copy switches on queue state')
+  // The old bare 保存 label must not return.
+  assert.ok(!src.includes(":'保存'}"),'the unqualified save label is retired')
+})

@@ -63,8 +63,8 @@
 | M8 | T8.2 `coordinator.dispatch` 失败三分类（确认未提交/会话已建命令未提交/提交未知）+ Board 分类展示；旧数据 phase=undefined 不伪造（0.5d） | 工程师 | P1 | D19 | D19 | 完成 |
 | M8 | T8.3 新增 `test/dispatch-phase.test.ts`（§7.7：phase 同次 CAS 持久化；command_submitted 失败不重发）（0.5d） | 工程师 | P1 | D20 | D20 | 完成 |
 | **M9 U08 工作区显式选择** | | | | | | |
-| M9 | T9.1 `newForm` 默认 `workspaceId=''`；核验 uiWorkspace 公开 API 能否确认当前工作区（design §11.2 唯一外部核验项），不能确认则显式选择 + `formErrors.workspace`；保存按钮按授权态文案（0.5d） | 工程师 | P1 | D21 | D21 | 待办 |
-| M9 | T9.2 `board-interactions.test.ts` 补 U08 断言（0.25d） | 工程师 | P1 | D22 | D22 | 待办 |
+| M9 | T9.1 `newForm` 默认 `workspaceId=''`；核验 uiWorkspace 公开 API 能否确认当前工作区（design §11.2 唯一外部核验项），不能确认则显式选择 + `formErrors.workspace`；保存按钮按授权态文案（0.5d） | 工程师 | P1 | D21 | D21 | 完成（核验结论：`UiWorkspace` 公开 API 无当前工作区 getter——`selection` 私有、`startSession` 仅内部继承；走显式选择兜底） |
+| M9 | T9.2 `board-interactions.test.ts` 补 U08 断言（0.25d） | 工程师 | P1 | D22 | D22 | 完成 |
 | **QA P1b** | QA-3 P1b 段复测（U06/U07/U08 链）（0.5d） | 质量QA | P1 | D23 | D23 | 待办 |
 | **M10 U09 标题三模式（B4）** | | | | | | |
 | M10 | T10.1 `QueueBoard.tsx` 单选留空/手动/AI；`settings.ts`/`title-policy.ts` 映射 none/manual→`generateTitle=false`；草稿保留；`titleMaxChars` 入高级选项；缺标题「未命名任务/未命名目标」（0.75d） | 工程师 | P2 | D24 | D24 | 待办 |

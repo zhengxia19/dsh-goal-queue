@@ -119,7 +119,9 @@ export function QueueBoard(props:BoardProps) {
     catch(e){props.actions.taskError(id,message(e))}
     finally{setActing(false)}
   }
-  const newForm = ()=>{setEditing('new');setRequeueFor(null);setTitle('');setWorkspaceId(workspaces.items[0]?.workspaceId??'');setPrompt('');setGoalMode(true);setGenerateTitle(false);setTitleMaxChars(24);setFollowDefault(false);setSelection(catalog?.default)}
+  // U08: no guessed default workspace — the public UI API cannot confirm the current one,
+  // so the form starts empty and saving requires an explicit choice.
+  const newForm = ()=>{setEditing('new');setRequeueFor(null);setTitle('');setWorkspaceId('');setPrompt('');setGoalMode(true);setGenerateTitle(false);setTitleMaxChars(24);setFollowDefault(false);setSelection(catalog?.default)}
   const editForm = (t:Task)=>{setEditing(t.id);setRequeueFor(null);setTitle(t.title);setWorkspaceId(t.workspaceId);setPrompt(t.prompt);setGoalMode(t.goalMode);setGenerateTitle(t.generateTitle??false);setTitleMaxChars(t.titleMaxChars??24);setFollowDefault(!t.modelSelection);setSelection(t.modelSelection??catalog?.default)}
   const displayedSelection=followDefault?catalog?.default:selection
   const selectedModel=catalog?.groups.find(p=>p.id===displayedSelection?.provider)?.models.find(m=>m.id===displayedSelection?.model)
@@ -130,6 +132,10 @@ export function QueueBoard(props:BoardProps) {
     if(submitting)return
     if(generateTitle&&prompt.length>MAX_TITLE_INPUT_CHARS){
       props.actions.formError('title','模型标题最多接受 8000 个 UTF-16 代码单元，请缩短题词或关闭标题生成')
+      return
+    }
+    if(!workspaceId){
+      props.actions.formError('workspace','请选择工作区')
       return
     }
     setSubmitting(true)
@@ -258,10 +264,11 @@ export function QueueBoard(props:BoardProps) {
         {formErrors.title&&<p role="alert">{formErrors.title}</p>}
         <label className="gq-check"><input type="checkbox" checked={generateTitle} onChange={e=>{setGenerateTitle(e.target.checked);if(e.target.checked)setTitle('')}}/> 由模型根据任务题词生成标题（额外模型请求）</label>
         {generateTitle&&<label>模型标题最长字符数 <input type="number" min={8} max={80} step={1} required value={titleMaxChars} onChange={e=>setTitleMaxChars(Number(e.target.value))}/></label>}
-        <label>执行工作区<select required value={workspaceId} onChange={e=>setWorkspaceId(e.target.value)}>
+        <label>执行工作区<select value={workspaceId} onChange={e=>{setWorkspaceId(e.target.value);if(e.target.value)props.actions.formError('workspace','')}}>
           <option value="">选择工作区</option>
           {workspaces.items.map(w=><option key={w.workspaceId} value={w.workspaceId}>{w.title} — {w.path}</option>)}
         </select></label>
+        {formErrors.workspace&&<p role="alert">{formErrors.workspace}</p>}
         {!catalog&&<p role="status">{catalogError||'正在读取 Host 模型目录…'}</p>}
         <button type="button" onClick={()=>setCatalogRevision(n=>n+1)}>刷新模型目录</button>
         {catalog?.failures.map(f=><p key={f.id} role="alert">模型目录读取失败：{f.name}。请检查 Host 配置。</p>)}
@@ -286,7 +293,7 @@ export function QueueBoard(props:BoardProps) {
         <label>任务说明<textarea required value={prompt} onChange={e=>setPrompt(e.target.value)} rows={7} placeholder="说明任务、约束和验收标准"/></label>
         {generateTitle&&<p role={prompt.length>MAX_TITLE_INPUT_CHARS?'alert':'status'}>标题辅助请求最多 {MAX_TITLE_INPUT_CHARS} 个 UTF-16 代码单元，当前 {prompt.length}。超限可取消模型标题，原任务题词不会被截断。</p>}
         <p>标题可留空；不勾选时普通任务沿用 DSH 原生标题，纯 /goal 无法触发首消息自动命名。勾选后插件通过 Host 无工具的独立模型请求生成标题（8–80 字符硬上限），不向任务 Session 发送额外执行指令。</p>
-        <footer>{formErrors.form&&<p role="alert">保存失败：{formErrors.form}</p>}<button type="button" onClick={()=>{setEditing(null);setRequeueFor(null)}}>取消</button><button className="gq-primary" disabled={submitting||!workspaceId||!catalog||Boolean(modelError)||(generateTitle&&prompt.length>MAX_TITLE_INPUT_CHARS)} type="submit">{requeueFor?'重新排队':'保存'}</button></footer>
+        <footer>{formErrors.form&&<p role="alert">保存失败：{formErrors.form}</p>}{queueEnabled&&!requeueFor&&summary.pending>0&&<p role="status">加入后将按可用名额执行</p>}<button type="button" onClick={()=>{setEditing(null);setRequeueFor(null)}}>取消</button><button className="gq-primary" disabled={submitting||!catalog||Boolean(modelError)||(generateTitle&&prompt.length>MAX_TITLE_INPUT_CHARS)} type="submit">{requeueFor?'重新排队':queueEnabled?(summary.pending===0?'等待新任务，加入后执行':'加入运行中的队列'):'保存任务'}</button></footer>
       </form>
     </div>}
   </div>,document.body)
