@@ -66,6 +66,14 @@ export function QueueBoard(props:BoardProps) {
     return()=>{alive=false}
   },[open,catalogRevision,loadingState.status,props.operations.modelCatalog])
   const [filter,setFilter] = useState<TaskFilter>('current')
+  // U11 fix: every hook must run on every render — these five used to sit below the
+  // `!open` / not-ready early returns, so the first open after a shorter render threw
+  // React #310 (rendered more hooks than during the previous render) in the real Host.
+  const [panel,setPanel] = useState<string|null>(null)
+  const [insp,setInsp] = useState<TaskInspection|null>(null)
+  const [inspecting,setInspecting] = useState(false)
+  const [acting,setActing] = useState(false)
+  const [requeueFor,setRequeueFor] = useState<string|null>(null)
   useEffect(()=>{
     if (!open) return
     const onKey = (e:KeyboardEvent)=>{if(e.key==='Escape')props.actions.close()}
@@ -98,11 +106,7 @@ export function QueueBoard(props:BoardProps) {
     catch(e){props.actions.taskError(id,message(e))}
   }
   // U06: one read-only verification entry per task; every action re-checks at submission time.
-  const [panel,setPanel] = useState<string|null>(null)
-  const [insp,setInsp] = useState<TaskInspection|null>(null)
-  const [inspecting,setInspecting] = useState(false)
-  const [acting,setActing] = useState(false)
-  const [requeueFor,setRequeueFor] = useState<string|null>(null)
+  // (The five panel hooks live above the early returns — see the hook-order note there.)
   const openPanel = (id:string)=>{
     if(panel===id){setPanel(null);setInsp(null);return}
     setPanel(id);setInsp(null);setActing(false)
