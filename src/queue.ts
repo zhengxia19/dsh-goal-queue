@@ -339,7 +339,7 @@ export function requeueEdited(q:QueueState,id:string,input:TaskInput,now=Date.no
     ...t,...input,...normalized,modelSelection:input.modelSelection,
     title:input.title.trim(),prompt:input.prompt.trim(),
     status:'pending' as const,source:'queue' as const,sessionId:undefined,goalId:undefined,
-    seenRunning:false,detail:'编辑后重新排队：已证明命令未提交，下次派发将创建新 Session',
+    seenRunning:false,detail:'修改后重新排队：已证明命令未提交，下次派发将创建新 Session',
     updatedAt:now,attempts
   }:t)}
 }

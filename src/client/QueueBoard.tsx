@@ -139,7 +139,7 @@ export function QueueBoard(props:BoardProps) {
       const modelSelection=followDefault?undefined:resolveTaskModel(catalog,selection)
       const input={title:generateTitle?'':title,workspaceId,prompt,goalMode,generateTitle,titleMaxChars,modelSelection}
       if(editing==='new')await props.operations.add(input)
-      else if(requeueFor){await props.operations.requeueEdited(requeueFor,input);props.actions.notice('已编辑并重新排队，点击“启动队列”执行');setPanel(null);setInsp(null)}
+      else if(requeueFor){await props.operations.requeueEdited(requeueFor,input);props.actions.notice('已修改并重新排队，点击“启动队列”执行');setPanel(null);setInsp(null)}
       else if(editing)await props.operations.edit(editing,input)
       setEditing(null);setRequeueFor(null);props.actions.formError('form','')
     }catch(e){props.actions.formError('form',message(e))}
@@ -218,16 +218,16 @@ export function QueueBoard(props:BoardProps) {
               {insp.warnings.map((w,k)=><p key={k} className="gq-detail" role="status">{w}</p>)}
               <div className="gq-inspect-actions">
                 <button type="button" disabled={!task.sessionId||acting} onClick={()=>{props.operations.open(task.id);props.actions.close()}}>查看原会话</button>
-                <button type="button" disabled={!insp.canResume||acting} onClick={()=>{void act(task.id,()=>props.operations.resumeGoal(task.id),'原 Goal 已恢复，占用一个执行名额')}}>恢复原 Goal</button>
+                <button type="button" disabled={!insp.canResume||acting} onClick={()=>{void act(task.id,()=>props.operations.resumeGoal(task.id),'原 Goal 已恢复，占用一个执行名额')}}>继续原目标</button>
                 <button type="button" disabled={!insp.canRetry||acting} onClick={()=>{void act(task.id,()=>props.operations.retry(task.id),'已重新排队，点击“启动队列”执行')}}>重试此任务（新会话）</button>
                 <button type="button" disabled={!insp.canSkip||acting} onClick={()=>{void act(task.id,()=>props.operations.skip(task.id),'已跳过，队列仍暂停。点击“启动队列”继续待执行任务。')}}>跳过此任务</button>
-                <button type="button" disabled={!insp.canRequeueEdited||acting} onClick={()=>{editForm(task);setRequeueFor(task.id)}}>编辑后重新排队</button>
+                <button type="button" disabled={!insp.canRequeueEdited||acting} onClick={()=>{editForm(task);setRequeueFor(task.id)}}>修改后重新排队</button>
                 <button type="button" disabled={q.activeIds.includes(task.id)||UNRESOLVED.includes(task.status)||acting} onClick={()=>{void act(task.id,()=>props.operations.remove(task.id),'记录已删除；其余任务状态不变')}}>删除记录</button>
               </div>
-              {!insp.canResume&&insp.reasons.resume&&<p className="gq-detail">恢复原 Goal：{insp.reasons.resume}</p>}
+              {!insp.canResume&&insp.reasons.resume&&<p className="gq-detail">继续原目标：{insp.reasons.resume}</p>}
               {!insp.canRetry&&insp.reasons.retry&&<p className="gq-detail">重试此任务：{insp.reasons.retry}</p>}
               {!insp.canSkip&&insp.reasons.skip&&<p className="gq-detail">跳过此任务：{insp.reasons.skip}</p>}
-              {!insp.canRequeueEdited&&insp.reasons.requeueEdited&&<p className="gq-detail">编辑后重新排队：{insp.reasons.requeueEdited}</p>}
+              {!insp.canRequeueEdited&&insp.reasons.requeueEdited&&<p className="gq-detail">修改后重新排队：{insp.reasons.requeueEdited}</p>}
               {q.activeIds.includes(task.id)?<p className="gq-detail">删除记录：运行中的任务不能删除。</p>:UNRESOLVED.includes(task.status)&&<p className="gq-detail">删除记录：异常任务须先人工处置，不能删除证据。</p>}
             </>}
           </div>}
@@ -253,7 +253,7 @@ export function QueueBoard(props:BoardProps) {
     </main>
     {editing!==null&&<div className="gq-modal-backdrop" onMouseDown={(e)=>{if(e.target===e.currentTarget){setEditing(null);setRequeueFor(null)}}}>
       <form className="gq-modal" onSubmit={e=>{void onSave(e)}}>
-        <h2>{editing==='new'?'添加任务':requeueFor?'编辑后重新排队':'编辑待执行任务'}</h2>
+        <h2>{editing==='new'?'添加任务':requeueFor?'修改后重新排队':'编辑待执行任务'}</h2>
         <label>任务标题（可留空）<input maxLength={200} value={title} disabled={generateTitle} onChange={e=>setTitle(e.target.value)} placeholder={generateTitle?'将由模型生成标题':'可选，留空时普通模式沿用 DSH 自动标题'} /></label>
         {formErrors.title&&<p role="alert">{formErrors.title}</p>}
         <label className="gq-check"><input type="checkbox" checked={generateTitle} onChange={e=>{setGenerateTitle(e.target.checked);if(e.target.checked)setTitle('')}}/> 由模型根据任务题词生成标题（额外模型请求）</label>

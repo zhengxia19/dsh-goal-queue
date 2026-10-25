@@ -142,12 +142,14 @@ test('the board names actions accurately and never uses window.confirm',()=>{
   assert.ok(!src.includes('window.confirm'),'dispositions no longer rely on window.confirm')
   for(const phrase of [
     '查看并处理','待核实',
-    '查看原会话','恢复原 Goal','重试此任务（新会话）','跳过此任务','编辑后重新排队','删除记录',
+    '查看原会话','继续原目标','重试此任务（新会话）','跳过此任务','修改后重新排队','删除记录',
     '正在只读核实原 Session 与 Goal…',
     '原 Goal 已恢复，占用一个执行名额',
     '已重新排队，点击“启动队列”执行',
     '已跳过，队列仍暂停。点击“启动队列”继续待执行任务。',
-    '已编辑并重新排队，点击“启动队列”执行',
+    '已修改并重新排队，点击“启动队列”执行',
     '记录已删除；其余任务状态不变',
   ])assert.ok(src.includes(phrase),'QueueBoard must contain: '+phrase)
+  // design rev.1.1: 清单 §5 is the authoritative naming; the rev.1.0 wording must not return.
+  assert.ok(!src.includes('恢复原 Goal')&&!src.includes('编辑后重新排队'),'authoritative action naming per 清单 §5')
 })
