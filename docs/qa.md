@@ -296,4 +296,39 @@
 
 ---
 
+## QA-8：M12（U11 Board 信息分层 + OBS-5）复测
+
+- **测试标题**：QA-8 U11 Board 信息分层复测（顶部授权态/占用拆分/待执行/未处置直达、主操作按 blockers 切换、行分层、筛选计数、详情折叠含 attempt 级证据）
+- **被测提交**：`e34a742`（feat(U11/T12)，6 files +90/−29）
+- **测试范围**：design §U11、PRD US-11 验收口径、OBS-5 闭环核验、README 双语同步
+- **优先级**：P2（UI 分层，行为红线 B1–B7 回归由探针把关）
+- **独立验证**：`npm run typecheck` ✅；`npm test` **140/140 全绿**（基线 139 + 新增 U11 用例 1）；`npm run build` ✅；探针 R01–R07 **7/7 PASS** 无回归
+
+### 测试用例表
+
+| 测试编号 | 关联用户故事 | 前置条件 | 测试步骤 | 预期结果 | 实际结果 | 状态 |
+|---|---|---|---|---|---|---|
+| QA8-01 | US-11 | 被测 `e34a742` | 独立跑三命令 + 探针 | 全绿无回归 | 140/140、build ✅、探针 7/7 | ✅ |
+| QA8-02 | US-11 | design §U11 顶部口径 | 对照源码核验顶部五要素 | 授权态、占用拆分、待执行、未处置（点击→筛异常）、同步新鲜度 | 授权态（gq-notes 已启用/未获授权句）；占用「启动占位/已观察运行/外部会话」（starting claim 不再统称运行会话）；`{summary.pending} 项待执行`；「N 项异常」与告警条均为 `setFilter('abnormal')` 可点入口（≥2 处断言）；syncLabel 新鲜度（U03 延续） | ✅ |
+| QA8-03 | US-11 | 主操作切换口径 | 核验主按钮三分支 | blockers>0→「处理 N 项异常」直达异常筛选；无异常→「启动队列」（显式授权、扫描中禁用）；已启用→「暂停队列」 | 三分支逐字一致；禁用条件 `!queueEnabled&&blockers.length===0&&discovering`——有异常时按钮可点（仅切筛选，不派发），无异常扫描中禁用，符合「启动仍是显式授权」 | ✅ |
+| QA8-04 | US-11 | 筛选计数与筛选结果一致 | 独立对照 `filterCounts` 与 `queue-view.ts filterTaskRows` 谓词 | 四筛选计数=对应筛选实际行数 | current=pending/running/starting、abnormal=`summary.unresolved`（=UNRESOLVED 过滤，与 `summarizeQueue` 同源）、history=completed/skipped、all=全量——四条谓词逐字一致 | ✅ |
+| QA8-05 | US-11 | 行分层 | 核验行内要素与主操作 | 行内只留标题、工作区、状态、必要原因（task.detail/titleError）、主操作（异常→查看并处理 / 待执行→编辑 / 非异常有 Session→查看原会话）；次操作入「更多」 | 行 214–226 齐全；主操作三分支按 abnormal/editable/sessionId 渲染；上移/下移/编辑/删除只在适用时渲染入「更多」，无灰色 disabled 占位（`disabled={!editable` 防回流断言）；needsReview 任务行内给「查看并处理」不入异常筛选——与 blockers=UNRESOLVED 既有口径一致，非回归 | ✅ |
+| QA8-06 | US-11 / OBS-5 | 详情折叠 | 核验「详情」区内容与位置 | 模型详情、创建/状态时间戳、完整 Session ID、执行记录全部折叠；attempt 级 `titleError`（标注）与 `detail` 逐条显示 | 全部在 `<details className="gq-task-details">` 之后（indexOf 断言）；`attempt.titleError` 标「标题生成失败：」、`attempt.detail` 逐条渲染——**OBS-5 闭环** | ✅ |
+| QA8-07 | US-11 | 常驻提示与帮助 | 逐字对照 design §U11 引句 | 「暂停只停止派发，已在运行的任务继续。」；完成判据入帮助折叠 | 与 design §U11 引句逐字一致（PRD「已运行任务继续」以 design 为准）；判据入「完成判据与验收边界」details | ✅ |
+| QA8-08 | US-11 | 窄窗与 100+ 记录 | 核验 styles.ts 与列表策略 | ≤720px 媒体查询、控件 ≥36px 触控高度；未引入虚拟列表（清单：未实测不引入） | 媒体查询收紧内边距 + `min-height:36px`；无虚拟列表，沿用 `gq-list` 滚动 | ✅ |
+| QA8-09 | US-11 | 键盘/焦点 | 核验折叠实现方式 | 键盘展开收起、焦点归还留 U12 实机验证 | 原生 `<details>`（更多/详情/帮助）天然可用；Escape 关闭面板既有在位；实机项按 design §U11 归 U12 | ✅ |
+| QA8-10 | US-11 | README 同步 | 对照双语新增条目 | 「信息分层」条目双语一致 | README.md/README.zh.md 均已同步（异常直达、计数、行分层、attempt 级证据折叠） | ✅ |
+
+### 既有测试适配核对
+
+本轮无既有测试改动（纯新增 1 项用例），无适配风险。
+
+### 结论与观察项
+
+**QA-8（M12/U11 段 + OBS-5）通过**。顶部五要素、主操作按 blockers 切换、筛选计数与筛选谓词同源一致、行分层无 disabled 占位、详情折叠含 attempt 级证据（OBS-5 闭环）、常驻提示与 design §U11 逐字一致、窄窗媒体查询到位、README 双语同步。无阻塞 bug，无新观察项。
+
+观察项台账更新：OBS-5 闭环；跟踪中仅剩 OBS-1（attempt detail 覆写，待产品经理口径）。
+
+---
+
 （以下段落由后续复测追加）
