@@ -217,3 +217,30 @@ test('U10: form order, inline errors, stated save blocks, and jargon moved to he
   // Save failures stay inline in the form footer, never only the global bar.
   assert.ok(src.includes('保存失败：'),'form-level failure renders inline')
 })
+test('U11: board layering — abnormal reachable, secondary actions folded, details carry the evidence',()=>{
+  const src=readFileSync(new URL('../src/client/QueueBoard.tsx',import.meta.url),'utf8')
+  // The primary action follows blockers; abnormal counts jump straight to the abnormal filter.
+  assert.ok(src.includes('处理 ${blockers.length} 项异常'),'primary action names the abnormal workload')
+  assert.ok(src.includes('{summary.unresolved} 项异常'),'header states the abnormal count')
+  assert.ok((src.match(/onClick=\{\(\)=>setFilter\('abnormal'\)\}/g)??[]).length>=2,'counts route to the abnormal filter')
+  // Filter buttons carry counts so abnormal work is never hidden behind the default view.
+  assert.ok(src.includes('{label}（{filterCounts[value]}）'),'filters carry counts')
+  // Occupancy distinguishes starting claims from observed runs — not everything is a running session.
+  assert.ok(src.includes('启动占位 ${summary.starting} · 已观察运行 ${summary.observedRunning}'),'occupancy split is explicit')
+  // The standing note is one sentence; completion criteria live in help.
+  assert.ok(src.includes('暂停只停止派发，已在运行的任务继续。'),'one-sentence standing note')
+  const helpAt=src.indexOf('<details className="gq-help">')
+  const criteriaAt=src.indexOf('目标模式以 DSH Goal 的 complete / blocked 为准')
+  assert.ok(helpAt!==-1&&criteriaAt>helpAt,'completion criteria moved into help')
+  // Row controls render only when applicable — no grey disabled placeholders on history rows.
+  assert.ok(!src.includes('disabled={!editable'),'no disabled placeholders in row controls')
+  assert.ok(src.includes('<details className="gq-more"><summary>更多</summary>'),'secondary actions live under 更多')
+  // Model details, timestamps, full Session ID and attempts fold into one disclosure.
+  const detailsAt=src.indexOf('<details className="gq-task-details">')
+  assert.ok(detailsAt!==-1,'details disclosure exists')
+  for(const marker of ['模型：沿用原 Session 配置','创建 {formatTime(task.createdAt)}','Session：{task.sessionId}','执行记录（'])
+    assert.ok(src.indexOf(marker)>detailsAt,marker+' must live inside the details disclosure')
+  // OBS-5: attempt-level titleError/detail are shown in the details area.
+  assert.ok(src.includes('attempt.titleError&&'),'attempt-level titleError displayed')
+  assert.ok(src.includes('attempt.detail&&'),'attempt-level detail displayed')
+})

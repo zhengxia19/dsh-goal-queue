@@ -66,7 +66,6 @@ export function QueueBoard(props:BoardProps) {
     return()=>{alive=false}
   },[open,catalogRevision,loadingState.status,props.operations.modelCatalog])
   const [filter,setFilter] = useState<TaskFilter>('current')
-  const [expanded,setExpanded] = useState<Record<string,boolean>>({})
   useEffect(()=>{
     if (!open) return
     const onKey = (e:KeyboardEvent)=>{if(e.key==='Escape')props.actions.close()}
@@ -157,6 +156,13 @@ export function QueueBoard(props:BoardProps) {
   }
   const busy = summary.occupied > 0
   const visibleRows=filterTaskRows(q,filter)
+  // U11: filter buttons carry counts so abnormal work is never hidden behind the default view.
+  const filterCounts:Record<TaskFilter,number>={
+    current:q.tasks.filter(t=>t.status==='pending'||t.status==='running'||t.status==='starting').length,
+    abnormal:summary.unresolved,
+    history:q.tasks.filter(t=>t.status==='completed'||t.status==='skipped').length,
+    all:q.tasks.length,
+  }
   const formatTime=(value:number)=>{
     const date=new Date(value)
     return Number.isNaN(date.getTime())?'未知':date.toLocaleString()
@@ -167,22 +173,26 @@ export function QueueBoard(props:BoardProps) {
     :'运行任务基线建立中…'
   return createPortal(<div className="gq-root" role="dialog" aria-modal="true" aria-label="DSH 任务队列">
     <header className="gq-head">
-      <div><h1>DSH 任务队列</h1><span>跨工作区任务 · {summary.pending} 项待执行 · {summary.unresolved} 项异常</span><span className="gq-sync" role="status">{syncLabel}</span></div>
+      <div><h1>DSH 任务队列</h1><span>跨工作区任务 · {summary.pending} 项待执行 · <button type="button" className="gq-link" onClick={()=>setFilter('abnormal')}>{summary.unresolved} 项异常</button></span><span className="gq-sync" role="status">{syncLabel}</span></div>
       <div className="gq-actions">
         <button type="button" onClick={newForm}>添加任务</button>
         <button type="button" disabled={discovering} onClick={()=>{void change(()=>props.operations.discover())}}>{discovering?'扫描中…':'刷新运行任务'}</button>
-        <button type="button" className={queueEnabled?'gq-warn':'gq-primary'} disabled={!queueEnabled && (blockers.length>0 || discovering)} onClick={()=>{void change(()=>props.operations.enable(!queueEnabled))}}>
-          {queueEnabled?'暂停队列':'启动队列'}
-        </button>
+        {/* U11: the primary action follows blockers — abnormal work is one click away, starting stays an explicit grant. */}
+        <button type="button" className={queueEnabled?'gq-warn':'gq-primary'} disabled={!queueEnabled&&blockers.length===0&&discovering} onClick={()=>{
+          if(queueEnabled){void change(()=>props.operations.enable(false))}
+          else if(blockers.length>0){setFilter('abnormal')}
+          else{void change(()=>props.operations.enable(true))}
+        }}>{queueEnabled?'暂停队列':blockers.length>0?`处理 ${blockers.length} 项异常`:'启动队列'}</button>
         <button type="button" onClick={()=>props.actions.close()}>关闭</button>
       </div>
     </header>
     <div className="gq-notes">
       {queueEnabled?'队列已启用：串行派发，至多 1 项占用执行。':'队列未获当前客户端启动授权：不会启动下一项；已有任务不会被中断。'}
-      {busy?` 当前有 ${summary.occupied} 项运行／观察任务（启动 ${summary.starting} · 运行 ${summary.observedRunning} · 外部 ${summary.externalActivity}）；串行模式：至多 1 项占用执行。`:''}
+      {busy?` 当前占用 ${summary.occupied} 个执行名额（启动占位 ${summary.starting} · 已观察运行 ${summary.observedRunning} · 外部会话 ${summary.externalActivity}）；串行模式：至多 1 项占用执行。`:''}
       {summary.occupied>q.maxConcurrent&&<div className="gq-error">发现的运行任务已超过串行执行上限；不会强制结束已有 Session，也不会派发新任务。</div>}
-      {blockers.length>0 && <div className="gq-error" role="alert">有 {blockers.length} 项异常任务尚未处理，已禁止启动后续任务。先查看旧 Session，明确选择重新排队或人工跳过。</div>}
-      <div>目标模式以 DSH Goal 的 complete / blocked 为准；普通模式以已观察到的运行→空闲为准，不代表代码已通过人工验收。</div>
+      {blockers.length>0 && <div className="gq-error" role="alert"><button type="button" className="gq-link" onClick={()=>setFilter('abnormal')}>有 {blockers.length} 项异常任务尚未处理</button>，已禁止启动后续任务。先查看旧 Session，明确选择重新排队或人工跳过。</div>}
+      {/* U11: the standing explanation is one sentence; completion criteria live in help. */}
+      <div>暂停只停止派发，已在运行的任务继续。<details className="gq-help"><summary>完成判据与验收边界</summary><p>目标模式以 DSH Goal 的 complete / blocked 为准；普通模式以已观察到的运行→空闲为准，不代表代码已通过人工验收。</p></details></div>
     </div>
     {q.error && <div className="gq-error" role="status">{q.error}</div>}
     {notice && <div className="gq-notice" role="status">{notice}</div>}
@@ -190,11 +200,16 @@ export function QueueBoard(props:BoardProps) {
     <nav className="gq-filters" aria-label="队列筛选">
       {([['current','待执行与运行'],['abnormal','异常待处理'],['history','已完成与跳过'],['all','全部任务']] as const).map(([value,label])=>
         <button key={value} type="button" aria-pressed={filter===value}
-          onClick={()=>setFilter(value)}>{label}</button>)}
+          onClick={()=>setFilter(value)}>{label}（{filterCounts[value]}）</button>)}
     </nav>
     <main className="gq-list">
       {q.tasks.length===0?<div className="gq-empty">队列为空。添加任务并选择工作区，随后点击启动队列。</div>:visibleRows.length===0?<div className="gq-empty">此分类暂无任务。可切换筛选查看其他记录。</div>:visibleRows.map(({task,index:i})=>{
         const editable = task.status==='pending' && task.source!=='discovered'
+        // U11: only applicable actions render; no grey disabled placeholders on every row.
+        const abnormal = UNRESOLVED.includes(task.status)||Boolean(task.needsReview)
+        const canUp=editable&&q.tasks.slice(0,i).some(t=>t.status==='pending')
+        const canDown=editable&&q.tasks.slice(i+1).some(t=>t.status==='pending')
+        const canDelete=!UNRESOLVED.includes(task.status)&&!q.activeIds.includes(task.id)
         return <article className="gq-task" key={task.id} data-status={task.status}>
           <div className="gq-task-top">
             <span className="gq-order">{i+1}</span>
@@ -206,20 +221,19 @@ export function QueueBoard(props:BoardProps) {
             <span className="gq-pill" data-status={task.status}>{statusLabel(task)}</span>
           </div>
           <p className="gq-prompt">{task.prompt||'已纳入 DPH 现有 Session；无需重新提交指令'}</p>
-          <p className="gq-detail">{task.modelSelection?`模型：${task.modelSelection.provider} / ${task.modelSelection.model} · 推理：${task.modelSelection.reasoningEffort??'不适用'}`:task.source==='discovered'?'模型：沿用原 Session 配置':'模型：派发时使用 Host 默认并固定配置'}</p>
-          <p className="gq-detail">创建 {formatTime(task.createdAt)} · 最近状态 {formatTime(task.updatedAt)}</p>
           {task.detail&&<p className="gq-detail">{task.detail}</p>}
            {task.titleError&&<p className="gq-detail" role="status">{task.titleError}</p>}
            {taskErrors[task.id]&&<p className="gq-error" role="alert">操作失败：{taskErrors[task.id]}</p>}
           <div className="gq-task-controls">
-            <button type="button" disabled={!editable||!q.tasks.slice(0,i).some(t=>t.status==='pending')} onClick={()=>{void changeTask(task.id,()=>props.operations.move(task.id,-1))}}>上移</button>
-            <button type="button" disabled={!editable||!q.tasks.slice(i+1).some(t=>t.status==='pending')} onClick={()=>{void changeTask(task.id,()=>props.operations.move(task.id,1))}}>下移</button>
-            <button type="button" disabled={!editable} onClick={()=>editForm(task)}>编辑</button>
-            {!UNRESOLVED.includes(task.status)&&<button type="button" disabled={q.activeIds.includes(task.id)} onClick={()=>{void changeTask(task.id,()=>props.operations.remove(task.id))}}>删除</button>}
-            {task.sessionId&&<button type="button" onClick={()=>{props.operations.open(task.id);props.actions.close()}}>查看原会话</button>}
-            {Boolean(task.attempts?.length)&&<button type="button" aria-expanded={Boolean(expanded[task.id])}
-              onClick={()=>setExpanded(s=>({...s,[task.id]:!s[task.id]}))}>执行记录 ({task.attempts?.length})</button>}
-            {(UNRESOLVED.includes(task.status)||task.needsReview)&&<button type="button" aria-expanded={panel===task.id} onClick={()=>openPanel(task.id)}>查看并处理</button>}
+            {abnormal&&<button type="button" aria-expanded={panel===task.id} onClick={()=>openPanel(task.id)}>查看并处理</button>}
+            {!abnormal&&editable&&<button type="button" onClick={()=>editForm(task)}>编辑</button>}
+            {!abnormal&&task.sessionId&&<button type="button" onClick={()=>{props.operations.open(task.id);props.actions.close()}}>查看原会话</button>}
+            {(canUp||canDown||canDelete||(editable&&abnormal))&&<details className="gq-more"><summary>更多</summary><div className="gq-more-actions">
+              {canUp&&<button type="button" onClick={()=>{void changeTask(task.id,()=>props.operations.move(task.id,-1))}}>上移</button>}
+              {canDown&&<button type="button" onClick={()=>{void changeTask(task.id,()=>props.operations.move(task.id,1))}}>下移</button>}
+              {editable&&abnormal&&<button type="button" onClick={()=>editForm(task)}>编辑</button>}
+              {canDelete&&<button type="button" onClick={()=>{void changeTask(task.id,()=>props.operations.remove(task.id))}}>删除</button>}
+            </div></details>}
           </div>
           {panel===task.id&&<div className="gq-inspect" aria-label="核实面板">
             {inspecting&&<p role="status">正在只读核实原 Session 与 Goal…</p>}
@@ -241,14 +255,24 @@ export function QueueBoard(props:BoardProps) {
               {q.activeIds.includes(task.id)?<p className="gq-detail">删除记录：运行中的任务不能删除。</p>:UNRESOLVED.includes(task.status)&&<p className="gq-detail">删除记录：异常任务须先人工处置，不能删除证据。</p>}
             </>}
           </div>}
-          {expanded[task.id]&&<div className="gq-history" aria-label="历次执行记录">
-            {task.attempts?.map((attempt,index)=><div className="gq-history-row" key={attempt.id}>
-              <span>第 {index+1} 次 · {labels[attempt.status]} · Session：{attempt.sessionId||'未知'} · 记录 {formatTime(attempt.updatedAt)}</span>
-              {attempt.sessionId&&<button type="button" onClick={()=>{
-                props.operations.openAttempt(task.id,attempt.id);props.actions.close()
-              }}>打开历史 Session</button>}
-            </div>)}
-          </div>}
+          {/* U11: model details, timestamps, full Session ID and attempts live in one disclosure;
+              OBS-5: attempt-level titleError/detail are shown there too. */}
+          <details className="gq-task-details"><summary>详情</summary>
+            <p className="gq-detail">{task.modelSelection?`模型：${task.modelSelection.provider} / ${task.modelSelection.model} · 推理：${task.modelSelection.reasoningEffort??'不适用'}`:task.source==='discovered'?'模型：沿用原 Session 配置':'模型：派发时使用 Host 默认并固定配置'}</p>
+            <p className="gq-detail">创建 {formatTime(task.createdAt)} · 最近状态 {formatTime(task.updatedAt)}</p>
+            {task.sessionId&&<p className="gq-detail">Session：{task.sessionId}</p>}
+            {task.attempts?.length?<div className="gq-history" aria-label="历次执行记录">
+              <p className="gq-detail">执行记录（{task.attempts.length}）</p>
+              {task.attempts.map((attempt,index)=><div className="gq-history-row" key={attempt.id}>
+                <span>第 {index+1} 次 · {labels[attempt.status]} · Session：{attempt.sessionId||'未知'} · 记录 {formatTime(attempt.updatedAt)}</span>
+                {attempt.titleError&&<p className="gq-detail" role="status">标题生成失败：{attempt.titleError}</p>}
+                {attempt.detail&&<p className="gq-detail">{attempt.detail}</p>}
+                {attempt.sessionId&&<button type="button" onClick={()=>{
+                  props.operations.openAttempt(task.id,attempt.id);props.actions.close()
+                }}>打开历史 Session</button>}
+              </div>)}
+            </div>:null}
+          </details>
         </article>
       })}
       {q.sessionActivity.length>0&&<section className="gq-external" aria-label="外部活动">

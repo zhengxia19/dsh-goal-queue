@@ -14,6 +14,7 @@ See **[Chinese usage guide](README.zh.md)** for operating instructions, installa
 - Restart / reconnect never grants new dispatch authorization. Persisted active jobs are marked interrupted, then the overlay scan can reattach a Host-confirmed running Session without replay.
 - Explicitly resume an interrupted, idle Goal in its **original Session** with native `/goal resume`. Other interrupted jobs are manually investigated and either retried in a new Session or skipped.
 - Task titles use one control with three modes: **blank** (default; no extra model request), **manual**, and **AI generation** (one separate tool-free model request through the task's model selection, bounded to **8–80 Unicode code points, 24 by default**, configured under advanced options). Manual drafts survive mode switches. Tasks without a real title display as 未命名任务 / 未命名目标. AI generation persists the bounded result using the native Session Title service and never adds a synthetic task prompt, including in pure `/goal` mode.
+- **Information layering**: abnormal counts and the primary action (处理 N 项异常 / 启动队列) route straight to the abnormal filter, and filter tabs carry counts. A row keeps only the title, workspace, status, needed reason and primary action; inapplicable buttons are no longer grey placeholders and secondary actions live under 更多. Model details, timestamps, the full Session ID and per-attempt history (including each attempt's title failure and disposition notes) fold into a per-row details disclosure.
 
 ## Non-goals and guarantees
 

@@ -43,4 +43,12 @@ export const styles = String.raw`
 .gq-inspect{margin-top:10px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#7775);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#222);display:flex;flex-direction:column;gap:6px}
 .gq-inspect-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
 .gq-inspect-actions button{font-size:12px}
+.gq-root button.gq-link{border:0;background:none;padding:0;text-decoration:underline;font-size:inherit;color:inherit;cursor:pointer}
+.gq-more,.gq-task-details{margin-top:8px}
+.gq-more>summary,.gq-task-details>summary{cursor:pointer;font-size:12px;color:var(--dsw-alias-label-secondary,#aaa)}
+.gq-more-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}
+.gq-more-actions button{font-size:12px}
+.gq-task-details .gq-detail{margin:4px 0;overflow-wrap:anywhere}
+.gq-help{margin-top:4px}.gq-help summary{cursor:pointer}
+@media (max-width:720px){.gq-head{padding:12px 14px}.gq-notes,.gq-filters{padding-left:14px;padding-right:14px}.gq-list{padding:12px 14px}.gq-task-controls button{min-height:36px}}
 `
