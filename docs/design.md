@@ -1,6 +1,6 @@
 # 系统设计文档 — dsh-goal-queue U01–U13 变更实施
 
-- 版本：1.0（2026-10-24）
+- 版本：1.1（2026-10-24；rev.1.1：修正 U06 动作命名以对齐清单 §5 对照表与 PRD US-06、补 `GoalGateway` 契约、注明 `attempt.phase` schema 提前至 U06 落地）
 - 上游：`docs/prd.md`（产品经理）、`docs/项目优化分析与变更清单_2026-10-24.md`（需求基线）
 - 基线：分支 main，HEAD `69b675f`，版本 0.3.2-preview.0，适配 DPH v0.2.1-rc.2
 - 下游：`docs/tasks.md`（项目经理）
@@ -250,12 +250,18 @@ export interface TaskInspection {
   reasons: Partial<Record<'resume'|'retry'|'skip'|'requeueEdited', string>>
   warnings: string[]
 }
+export interface GoalGateway {
+  /** 只读：取该 Session 自身 goal 投影；无 Goal 返回 null。零写入、不占执行名额、不 retain。 */
+  goalOf(sessionId: string): Promise<{ id: string; phase?: string } | null>
+}
 export function inspectTask(id: string, deps: {
   queue: () => QueueState
   directory: SessionDirectory
   goals: GoalGateway
 }): Promise<TaskInspection>
 ```
+
+（rev.1.1：`GoalGateway` 为工程师按本节需要自定的最小只读接口，架构师确认并入契约——实现走既有 `session.projections.faceOf('goal')` 读取，不得引入写入、claim 或 retain。）
 
 只读：读目录快照 + 队列 + goal 投影；不写状态、不 claim。`canRequeueEdited` 复用 6.1 的可证明条件。
 
@@ -325,7 +331,7 @@ interface ViewState {
 ### U06 统一处理入口（R05/R06）
 文件：新增 `client/inspection.ts`、`client/coordinator.ts`（inspect、requeueEdited）、`client/QueueBoard.tsx`
 - 任务行单一按钮「查看并处理」→ 核实面板：事实（会话存在/运行/Goal id 匹配）+ 可用动作与理由。
-- 动作命名按变更清单第 5 节对照表：查看原会话 / 恢复原 Goal / 重试本任务（新会话）/ 跳过本任务 / 编辑后重新排队 / 删除记录。
+- 动作命名严格按变更清单第 5 节对照表与 PRD US-06：查看原会话 / 继续原目标 / 重试此任务（新会话）/ 跳过此任务 / 修改后重新排队 / 删除记录（rev.1.1 修正：rev.1.0 误写「恢复原 Goal／编辑后重新排队」，以本表为准）。
 - 去掉 `window.confirm`；处置后 notice 说明下一步（跳过→「队列仍暂停，点击启动队列继续」；重试→「已重新排队，点击启动队列执行」；恢复→「原 Goal 已恢复，占用一个执行名额」）。
 - interrupted 非 goalMode 标签「待核实」；goalMode →「等待人工恢复」。
 - 验收映射：U06 事件链（§7.6）。
@@ -333,6 +339,7 @@ interface ViewState {
 ### U07 派发阶段与可证明重排（B1/B3）
 文件：`client/models.ts`（DispatchPhase）、`queue.ts`（claim/setTaskModel/setSessionId/markModelConfirmed/markCommandSubmitted/requeueEdited）、`client/coordinator.ts`（dispatch）、`client/QueueBoard.tsx`
 - 阶段与既有数据同次 CAS 写入（见 6.1）；旧数据 phase=undefined 不伪造。
+- rev.1.1：`attempt.phase` 字段 schema 提前至 U06（M7）落地（`requeueEdited` 可证明性判定需要），U07 只补 dispatch 各阶段写入、不动结构；legacy attempt 无 phase 一律保守拒绝。
 - dispatch 失败分类：
   - phase ∈ {claimed, precheck} 且无 sessionId → 「已确认未提交，可编辑后重新排队」
   - phase ∈ {session_created, model_confirmed} → 「会话已创建、命令未提交，需处置原会话」
@@ -374,7 +381,7 @@ interface ViewState {
 - **queue.ts**：删除 `setConcurrency`；`EMPTY_QUEUE.maxConcurrent=1` 不变；`next()` 与 `claimGoalResume` 的容量守卫（`activeIds+sessionActivity >= maxConcurrent`）保留——maxConcurrent≡1 即串行闸门：同一时刻至多 1 个执行名额（自有 active 任务或外部观察会话）。
 - **coordinator**：删除 `setConcurrency` 方法；pump 的 `while(armed)` 结构不变——claim 串行 + 容量守卫已保证并发=1，不重写循环。
 - **UI**：移除「最大并发」下拉（QueueBoard:130）；busy 提示改为「串行模式：至多 1 项占用执行」；超上限警告（发现的运行任务 > 上限）保留——外部会话可能 >1，不强制结束、不派发新任务。
-- **与 U04/U06 关系**：占用来源拆分（starting/observedRunning/externalActivity）不变，occupied 语义不变；「恢复原 Goal」经 claimGoalResume 占用唯一名额，名额被占 → CAPACITY_FULL 提示「当前执行名额已被占用」。
+- **与 U04/U06 关系**：占用来源拆分（starting/observedRunning/externalActivity）不变，occupied 语义不变；「继续原目标」经 claimGoalResume 占用唯一名额，名额被占 → CAPACITY_FULL 提示「当前执行名额已被占用」。
 - 验收映射（Chief 给的验收例）：多任务待执行时启动队列 → 仅第一个进入运行；其结束（完成/失败处置释放名额）后下一个才可被派发；任何时刻不得两个任务同时占用 Session 执行。
 
 ## 8. 关键时序图与状态图
