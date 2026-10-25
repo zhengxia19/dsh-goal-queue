@@ -25,6 +25,10 @@ function message(error: unknown):string { return error instanceof Error ? error.
 export function QueueBoard(props:BoardProps) {
   const open = props.useStore(s=>s.open)
   const error = props.useStore(s=>s.error)
+  // U05: failures are rendered bound to their source; the global bar keeps system-level only.
+  const notice = props.useStore(s=>s.notice)
+  const formErrors = props.useStore(s=>s.formErrors)
+  const taskErrors = props.useStore(s=>s.taskErrors)
   const loadingState = props.useQueueSettings(s=>s)
   const settings = loadingState.value ?? DEFAULT_SETTINGS
   const workspaces = props.useWorkspaces(s=>s)
@@ -85,6 +89,11 @@ export function QueueBoard(props:BoardProps) {
     try { await op();props.actions.error('') }
     catch(e){props.actions.error(message(e))}
   }
+  // U05: task-row (and external-row) failures bind to that row instead of the global bar.
+  const changeTask = async (id:string,op:()=>Promise<void>)=> {
+    try { await op();props.actions.taskError(id,'') }
+    catch(e){props.actions.taskError(id,message(e))}
+  }
   const newForm = ()=>{setEditing('new');setTitle('');setWorkspaceId(workspaces.items[0]?.workspaceId??'');setPrompt('');setGoalMode(true);setGenerateTitle(false);setTitleMaxChars(24);setFollowDefault(false);setSelection(catalog?.default)}
   const editForm = (t:Task)=>{setEditing(t.id);setTitle(t.title);setWorkspaceId(t.workspaceId);setPrompt(t.prompt);setGoalMode(t.goalMode);setGenerateTitle(t.generateTitle??false);setTitleMaxChars(t.titleMaxChars??24);setFollowDefault(!t.modelSelection);setSelection(t.modelSelection??catalog?.default)}
   const displayedSelection=followDefault?catalog?.default:selection
@@ -95,7 +104,7 @@ export function QueueBoard(props:BoardProps) {
     event.preventDefault()
     if(submitting)return
     if(generateTitle&&prompt.length>MAX_TITLE_INPUT_CHARS){
-      props.actions.error('模型标题最多接受 8000 个 UTF-16 代码单元，请缩短题词或关闭标题生成')
+      props.actions.formError('title','模型标题最多接受 8000 个 UTF-16 代码单元，请缩短题词或关闭标题生成')
       return
     }
     setSubmitting(true)
@@ -106,8 +115,8 @@ export function QueueBoard(props:BoardProps) {
       const input={title:generateTitle?'':title,workspaceId,prompt,goalMode,generateTitle,titleMaxChars,modelSelection}
       if(editing==='new')await props.operations.add(input)
       else if(editing)await props.operations.edit(editing,input)
-      setEditing(null);props.actions.error('')
-    }catch(e){props.actions.error(message(e))}
+      setEditing(null);props.actions.formError('form','')
+    }catch(e){props.actions.formError('form',message(e))}
     finally{setSubmitting(false)}
   }
   const busy = summary.occupied > 0
@@ -142,7 +151,8 @@ export function QueueBoard(props:BoardProps) {
       {blockers.length>0 && <div className="gq-error" role="alert">有 {blockers.length} 项异常任务尚未处理，已禁止启动后续任务。先查看旧 Session，明确选择重新排队或人工跳过。</div>}
       <div>目标模式以 DSH Goal 的 complete / blocked 为准；普通模式以已观察到的运行→空闲为准，不代表代码已通过人工验收。</div>
     </div>
-    {q.error && <div className="gq-error" role="alert">{q.error}</div>}
+    {q.error && <div className="gq-error" role="status">{q.error}</div>}
+    {notice && <div className="gq-notice" role="status">{notice}</div>}
     {error && <div className="gq-error" role="alert">操作失败：{error}</div>}
     <nav className="gq-filters" aria-label="队列筛选">
       {([['current','待执行与运行'],['abnormal','异常待处理'],['history','已完成与跳过'],['all','全部任务']] as const).map(([value,label])=>
@@ -167,11 +177,12 @@ export function QueueBoard(props:BoardProps) {
           <p className="gq-detail">创建 {formatTime(task.createdAt)} · 最近状态 {formatTime(task.updatedAt)}</p>
           {task.detail&&<p className="gq-detail">{task.detail}</p>}
            {task.titleError&&<p className="gq-detail" role="status">{task.titleError}</p>}
+           {taskErrors[task.id]&&<p className="gq-error" role="alert">操作失败：{taskErrors[task.id]}</p>}
           <div className="gq-task-controls">
-            <button type="button" disabled={!editable||!q.tasks.slice(0,i).some(t=>t.status==='pending')} onClick={()=>{void change(()=>props.operations.move(task.id,-1))}}>上移</button>
-            <button type="button" disabled={!editable||!q.tasks.slice(i+1).some(t=>t.status==='pending')} onClick={()=>{void change(()=>props.operations.move(task.id,1))}}>下移</button>
+            <button type="button" disabled={!editable||!q.tasks.slice(0,i).some(t=>t.status==='pending')} onClick={()=>{void changeTask(task.id,()=>props.operations.move(task.id,-1))}}>上移</button>
+            <button type="button" disabled={!editable||!q.tasks.slice(i+1).some(t=>t.status==='pending')} onClick={()=>{void changeTask(task.id,()=>props.operations.move(task.id,1))}}>下移</button>
             <button type="button" disabled={!editable} onClick={()=>editForm(task)}>编辑</button>
-            <button type="button" disabled={q.activeIds.includes(task.id)||UNRESOLVED.includes(task.status)} onClick={()=>{void change(()=>props.operations.remove(task.id))}}>删除</button>
+            <button type="button" disabled={q.activeIds.includes(task.id)||UNRESOLVED.includes(task.status)} onClick={()=>{void changeTask(task.id,()=>props.operations.remove(task.id))}}>删除</button>
             {task.sessionId&&<button type="button" onClick={()=>{props.operations.open(task.id);props.actions.close()}}>打开 Session</button>}
             {Boolean(task.attempts?.length)&&<button type="button" aria-expanded={Boolean(expanded[task.id])}
               onClick={()=>setExpanded(s=>({...s,[task.id]:!s[task.id]}))}>执行记录 ({task.attempts?.length})</button>}
@@ -180,15 +191,15 @@ export function QueueBoard(props:BoardProps) {
               onClick={()=>{
                 if(resuming!==null||!window.confirm('将在原 Session 内执行 /goal resume；请确认先前的执行已经停止。'))return
                 setResuming(task.id)
-                void change(()=>props.operations.resumeGoal(task.id)).finally(()=>setResuming(null))
+                void changeTask(task.id,()=>props.operations.resumeGoal(task.id)).finally(()=>setResuming(null))
               }}>{resuming===task.id?'正在核实旧 Goal…':'继续原 Goal'}</button>}
             {UNRESOLVED.includes(task.status)&&Boolean(task.prompt.trim())&&<button type="button" onClick={()=>{
               if(!window.confirm('重新排队将创建新的 Session。请先确认旧 Session 已停止，防止重复修改代码。'))return
-              void change(()=>props.operations.retry(task.id))
+              void changeTask(task.id,()=>props.operations.retry(task.id))
             }}>重新排队</button>}
             {UNRESOLVED.includes(task.status)&&<button type="button" onClick={()=>{
               if(!window.confirm('只有确认旧 Session 已停止或妥善处理之后，才能跳过该异常任务。跳过不会标记原任务成功；确认人工跳过吗？'))return
-              void change(()=>props.operations.skip(task.id))
+              void changeTask(task.id,()=>props.operations.skip(task.id))
             }}>人工跳过</button>}
           </div>
           {expanded[task.id]&&<div className="gq-history" aria-label="历次执行记录">
@@ -206,7 +217,8 @@ export function QueueBoard(props:BoardProps) {
         <p className="gq-detail">队列外观察到的运行 Session，占用执行名额；仅其权威停止后释放，不会被队列强制结束。</p>
         {q.sessionActivity.map(id=><div className="gq-external-row" key={id}>
           <span>Session：{id}</span>
-          <button type="button" onClick={()=>{void change(()=>props.operations.openSessionById(id))}}>打开</button>
+          {taskErrors[id]&&<span className="gq-error" role="alert">{taskErrors[id]}</span>}
+          <button type="button" onClick={()=>{void changeTask(id,()=>props.operations.openSessionById(id))}}>打开</button>
         </div>)}
       </section>}
     </main>
@@ -214,6 +226,7 @@ export function QueueBoard(props:BoardProps) {
       <form className="gq-modal" onSubmit={e=>{void onSave(e)}}>
         <h2>{editing==='new'?'添加任务':'编辑待执行任务'}</h2>
         <label>任务标题（可留空）<input maxLength={200} value={title} disabled={generateTitle} onChange={e=>setTitle(e.target.value)} placeholder={generateTitle?'将由模型生成标题':'可选，留空时普通模式沿用 DSH 自动标题'} /></label>
+        {formErrors.title&&<p role="alert">{formErrors.title}</p>}
         <label className="gq-check"><input type="checkbox" checked={generateTitle} onChange={e=>{setGenerateTitle(e.target.checked);if(e.target.checked)setTitle('')}}/> 由模型根据任务题词生成标题（额外模型请求）</label>
         {generateTitle&&<label>模型标题最长字符数 <input type="number" min={8} max={80} step={1} required value={titleMaxChars} onChange={e=>setTitleMaxChars(Number(e.target.value))}/></label>}
         <label>执行工作区<select required value={workspaceId} onChange={e=>setWorkspaceId(e.target.value)}>
@@ -244,7 +257,7 @@ export function QueueBoard(props:BoardProps) {
         <label>任务说明<textarea required value={prompt} onChange={e=>setPrompt(e.target.value)} rows={7} placeholder="说明任务、约束和验收标准"/></label>
         {generateTitle&&<p role={prompt.length>MAX_TITLE_INPUT_CHARS?'alert':'status'}>标题辅助请求最多 {MAX_TITLE_INPUT_CHARS} 个 UTF-16 代码单元，当前 {prompt.length}。超限可取消模型标题，原任务题词不会被截断。</p>}
         <p>标题可留空；不勾选时普通任务沿用 DSH 原生标题，纯 /goal 无法触发首消息自动命名。勾选后插件通过 Host 无工具的独立模型请求生成标题（8–80 字符硬上限），不向任务 Session 发送额外执行指令。</p>
-        <footer><button type="button" onClick={()=>setEditing(null)}>取消</button><button className="gq-primary" disabled={submitting||!workspaceId||!catalog||Boolean(modelError)||(generateTitle&&prompt.length>MAX_TITLE_INPUT_CHARS)} type="submit">保存</button></footer>
+        <footer>{formErrors.form&&<p role="alert">保存失败：{formErrors.form}</p>}<button type="button" onClick={()=>setEditing(null)}>取消</button><button className="gq-primary" disabled={submitting||!workspaceId||!catalog||Boolean(modelError)||(generateTitle&&prompt.length>MAX_TITLE_INPUT_CHARS)} type="submit">保存</button></footer>
       </form>
     </div>}
   </div>,document.body)

@@ -15,6 +15,7 @@ export const styles = String.raw`
 .gq-warn{border-color:var(--dsw-alias-state-warn-primary,#e99a3b)!important}
 .gq-notes{padding:12px 22px;font-size:12px;line-height:1.8;color:var(--dsw-alias-label-secondary,#bbb);border-bottom:1px solid var(--dsw-alias-border-l1,#7774)}
 .gq-error{margin:8px 22px;padding:10px;border:1px solid var(--dsw-alias-state-error-primary,#f77);border-radius:7px;color:var(--dsw-alias-state-error-primary,#f77)}
+.gq-notice{margin:8px 22px;padding:10px;border:1px solid var(--dsw-alias-border-l2,#7775);border-radius:7px;font-size:12px;color:var(--dsw-alias-label-primary,#ddd)}
 .gq-list{overflow:auto;flex:1;min-height:0;padding:16px 22px}.gq-empty{margin:70px auto;text-align:center;max-width:600px;color:var(--dsw-alias-label-secondary,#aaa)}
 .gq-task{border:1px solid var(--dsw-alias-border-l2,#7775);border-radius:10px;margin:0 0 11px;padding:13px 15px;background:var(--dsw-alias-bg-layer-1,#222)}
 .gq-task[data-status=running],.gq-task[data-status=starting]{border-left:4px solid var(--dsw-alias-brand-primary,#6ac)}

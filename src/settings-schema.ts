@@ -24,6 +24,7 @@ export const queueSchema = z.object({
         goalId:z.union([z.string(),z.const(undefined)]),
         seenRunning:z.union([z.boolean(),z.const(undefined)]),
         detail:z.union([z.string(),z.const(undefined)]),
+        titleError:z.union([z.string(),z.const(undefined)]),
         createdAt:z.number(),updatedAt:z.number(),
       })),z.const(undefined)]),
       createdAt: z.number(), updatedAt: z.number(),

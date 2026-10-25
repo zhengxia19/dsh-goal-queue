@@ -96,7 +96,9 @@ for(const option of ['failSelect','differentSelection','invalidModel','failFreez
 test('known optional title failure preserves diagnostics and submits task only once',async()=>{
   const x=fixture({titleFailure:true});try{x.coordinator.start();await settle();await x.coordinator.enable(true);await settle()
     assert.equal(x.commands.length,2);assert.equal(x.commands[1],'/goal work')
-    assert.match(x.value().queue.tasks[0]?.detail??'',/finish=max-tokens/)
+    // U05: the title diagnostic is bound to the task (titleError), never the global error bar.
+    assert.match(x.value().queue.tasks[0]?.titleError??'',/finish=max-tokens/)
+    assert.equal(x.value().queue.error,'','known title failure must not pollute q.error')
   }finally{x.coordinator.dispose()}
 })
 

@@ -312,8 +312,10 @@ export class Coordinator {
         const failure=result.matched?result.error:'Host 未安装模型标题生成命令'
         if(failure){
           console.warn('[goal-queue] optional AI title generation failed; task proceeds normally:',failure)
+          // U05: the warning is bound to the task (archived into the attempt at the next
+          // claim); it never touches q.error and never overwrites execution detail.
           await this.write(q=>q.activeIds.includes(task.id)
-            ?updateActive(q,task.id,{titleError:'模型标题生成失败：'+failure,detail:'模型标题生成失败：'+failure+'；任务继续正常派发'}):q)
+            ?updateActive(q,task.id,{titleError:'模型标题生成失败：'+failure}):q)
         }
       }
       if(await abandon())return

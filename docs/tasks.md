@@ -45,10 +45,10 @@
 | M4 | T4.2 `QueueButton.tsx`「占用 N（启动 X · 运行 Y · 外部 Z）」；Board 新增「外部活动」区，每行「打开」（0.5d） | 工程师 | P1 | D8 | D8 | 完成 |
 | M4 | T4.3 新增 `test/session-activity.test.ts`（§7.5：删旧任务后活动仍可打开；仅权威 stop 释放；去重/超限不变）（0.5d） | 工程师 | P1 | D9 | D9 | 完成 |
 | **M5 U05 告警生命周期（R04/R07）** | | | | | | |
-| M5 | T5.1 schema/models：Task/Attempt 加 `titleError`（**先于 U07 schema 定稿**）；`claim` 归档上一 attempt 的 titleError（0.5d） | 工程师 | P1 | D10 | D10 | 待办 |
-| M5 | T5.2 `updateActive` 不再写 `q.error`；`title-command.ts` 失败写 `task.titleError`（0.25d） | 工程师 | P1 | D10 | D10 | 待办 |
-| M5 | T5.3 `viewStore` 扩展（notice/formErrors/taskErrors）+ Board 按来源绑定渲染；`q.error` 降为状态提示条；Host 不可信仍阻断（0.5d） | 工程师 | P1 | D11 | D11 | 待办 |
-| M5 | T5.4 新增 `test/alert-lifecycle.test.ts`（§7.4）（0.5d） | 工程师 | P1 | D11 | D11 | 待办 |
+| M5 | T5.1 schema/models：Task/Attempt 加 `titleError`（**先于 U07 schema 定稿**）；`claim` 归档上一 attempt 的 titleError（0.5d） | 工程师 | P1 | D10 | D10 | 完成 |
+| M5 | T5.2 `updateActive` 不再写 `q.error`；`title-command.ts` 失败写 `task.titleError`（0.25d） | 工程师 | P1 | D10 | D10 | 完成 |
+| M5 | T5.3 `viewStore` 扩展（notice/formErrors/taskErrors）+ Board 按来源绑定渲染；`q.error` 降为状态提示条；Host 不可信仍阻断（0.5d） | 工程师 | P1 | D11 | D11 | 完成 |
+| M5 | T5.4 新增 `test/alert-lifecycle.test.ts`（§7.4）（0.5d） | 工程师 | P1 | D11 | D11 | 完成 |
 | **M6 U13 串行派发（并发上限=1）** | | | | | | |
 | M6 | T6.1 `settings-schema.ts` `maxConcurrent` → `default(1).transform(() => 1)`（旧值 2–8 归一）；删 `queue.ts`/`coordinator.ts` 的 `setConcurrency`；移除 Board「最大并发」下拉（0.5d） | 工程师 | P1 | D12 | D12 | 待办 |
 | M6 | T6.2 busy 提示改「串行模式：至多 1 项占用执行」；超上限警告保留；确认 `next()`/`claimGoalResume` 容量守卫即串行闸门、pump 结构不动（0.25d） | 工程师 | P1 | D12 | D12 | 待办 |

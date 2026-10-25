@@ -6,6 +6,8 @@ export type TaskSource = 'queue'|'discovered'
 export interface TaskAttempt {
   id:string; status:TaskStatus; sessionId?:string; goalId?:string;
   seenRunning?:boolean; detail?:string; createdAt:number; updatedAt:number
+  /** U05: title failure of that execution, archived from the task at the next claim. */
+  titleError?:string
 }
 export interface Task {
   id: string; workspaceId: string; title: string; prompt: string; goalMode: boolean
@@ -52,7 +54,8 @@ function validAttempts(raw:unknown):raw is TaskAttempt[]{
       ||(a.sessionId!==undefined&&typeof a.sessionId!=='string')
       ||(a.goalId!==undefined&&typeof a.goalId!=='string')
       ||(a.seenRunning!==undefined&&typeof a.seenRunning!=='boolean')
-      ||(a.detail!==undefined&&typeof a.detail!=='string'))return false
+      ||(a.detail!==undefined&&typeof a.detail!=='string')
+      ||(a.titleError!==undefined&&typeof a.titleError!=='string'))return false
     seen.add(a.id);return true
   })
 }
@@ -61,7 +64,7 @@ export function attemptsOf(t:Task):TaskAttempt[]{
   if(t.attempts!==undefined)return t.attempts
   if(t.status==='pending'&&!t.sessionId)return []
   return [{id:t.id+':attempt:1',status:t.status,sessionId:t.sessionId,goalId:t.goalId,
-    seenRunning:t.seenRunning,detail:t.detail,createdAt:t.createdAt,updatedAt:t.updatedAt}]
+    seenRunning:t.seenRunning,detail:t.detail,titleError:t.titleError,createdAt:t.createdAt,updatedAt:t.updatedAt}]
 }
 function amendAttempt(t:Task,patch:Partial<Task>,now:number):Task{
   const attempts=attemptsOf(t)
@@ -198,7 +201,10 @@ export function claim(q:QueueState,id:string,now=Date.now()):QueueState{
   return withActive({...q,tasks:q.tasks.map(t=>{
     if(t.id!==id)return t
     const attempts=attemptsOf(t)
-    return {...t,status:'starting',updatedAt:now,attempts:[...attempts,{
+    // U05: a title warning belongs to the attempt that produced it; archive it before the new run.
+    const archived=t.titleError===undefined||!attempts.length?attempts
+      :attempts.map((a,i)=>i===attempts.length-1?{...a,titleError:t.titleError}:a)
+    return {...t,status:'starting',updatedAt:now,titleError:undefined,attempts:[...archived,{
       id:t.id+':attempt:'+(attempts.length+1),status:'starting' as const,
       createdAt:now,updatedAt:now
     }]}
@@ -213,9 +219,9 @@ export function updateActive(q:QueueState,id:string,patch:Partial<Task>,now=Date
   if(status!==undefined&&!['running','completed','blocked','failed','interrupted'].includes(status))throw Error('非法任务状态')
   const terminal=status!==undefined&&['completed','blocked','failed','interrupted'].includes(status)
   const ids=terminal?q.activeIds.filter(x=>x!==id):q.activeIds
+  // U05: task outcomes never write the global q.error; unresolved still pauses the queue.
   return withActive({...q,
     enabled:status&&UNRESOLVED.includes(status)?false:q.enabled,
-    error:status&&UNRESOLVED.includes(status)?(patch.detail||status):q.error,
     tasks:q.tasks.map(t=>t.id===id?amendAttempt(t,{...rest,...(status?{status}: {})},now):t)
   },ids)
 }
