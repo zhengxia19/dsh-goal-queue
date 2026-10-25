@@ -9,7 +9,7 @@ import { resolveTaskModel, sameModel } from '../model-policy.ts'
 import { QueueError } from '../errors.ts'
 import type { SessionDirectory, DirectorySnapshot } from './directory.ts'
 import { UNRESOLVED,add,adopt,claim,decode,edit,flagForReview,move,next,recover,remove,retry,
-  setConcurrency,setSessionId,setTaskModel,skip,updateActive,updateTitle,releaseUnsubmittedClaim,claimGoalResume,trackSessionActivity,releaseSessionActivity,type QueueState,type Task,type TaskInput } from '../queue.ts'
+  setSessionId,setTaskModel,skip,updateActive,updateTitle,releaseUnsubmittedClaim,claimGoalResume,trackSessionActivity,releaseSessionActivity,type QueueState,type Task,type TaskInput } from '../queue.ts'
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
   interface SessionReferenceSourceMap { goalQueue: unknown }
 }
@@ -188,7 +188,6 @@ export class Coordinator {
   }
   retry(id:string):Promise<void>{return this.disposeAbnormal(id,'retry')}
   skip(id:string):Promise<void>{return this.disposeAbnormal(id,'skip')}
-  setConcurrency(limit:number):Promise<void>{return this.write(q=>setConcurrency(q,limit))}
   open(id:string):void{
     const sessionId=this.queue().tasks.find(t=>t.id===id)?.sessionId
     if(sessionId)this.openSession?.(sessionId as SessionId)

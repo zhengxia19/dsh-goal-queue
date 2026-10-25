@@ -50,9 +50,9 @@
 | M5 | T5.3 `viewStore` 扩展（notice/formErrors/taskErrors）+ Board 按来源绑定渲染；`q.error` 降为状态提示条；Host 不可信仍阻断（0.5d） | 工程师 | P1 | D11 | D11 | 完成 |
 | M5 | T5.4 新增 `test/alert-lifecycle.test.ts`（§7.4）（0.5d） | 工程师 | P1 | D11 | D11 | 完成 |
 | **M6 U13 串行派发（并发上限=1）** | | | | | | |
-| M6 | T6.1 `settings-schema.ts` `maxConcurrent` → `default(1).transform(() => 1)`（旧值 2–8 归一）；删 `queue.ts`/`coordinator.ts` 的 `setConcurrency`；移除 Board「最大并发」下拉（0.5d） | 工程师 | P1 | D12 | D12 | 待办 |
-| M6 | T6.2 busy 提示改「串行模式：至多 1 项占用执行」；超上限警告保留；确认 `next()`/`claimGoalResume` 容量守卫即串行闸门、pump 结构不动（0.25d） | 工程师 | P1 | D12 | D12 | 待办 |
-| M6 | T6.3 新增 `test/serial-dispatch.test.ts`（旧数据归一；一名额被占 next 返回 undefined；claimGoalResume 占名额后 CAPACITY_FULL；多 pending 仅第一个 claim；释放后第二个才 claim）（0.5d） | 工程师 | P1 | D13 | D13 | 待办 |
+| M6 | T6.1 `settings-schema.ts` `maxConcurrent` → `default(1).transform(() => 1)`（旧值 2–8 归一；schemastery 无链式 transform，落地为静态 `z.transform(z.number().default(1), () => 1)`，语义一致）；删 `queue.ts`/`coordinator.ts` 的 `setConcurrency`；移除 Board「最大并发」下拉（0.5d） | 工程师 | P1 | D12 | D12 | 完成 |
+| M6 | T6.2 busy 提示改「串行模式：至多 1 项占用执行」；超上限警告保留；确认 `next()`/`claimGoalResume` 容量守卫即串行闸门、pump 结构不动（`claimGoalResume` 改抛 `QueueError('CAPACITY_FULL','当前执行名额已被占用')`）（0.25d） | 工程师 | P1 | D12 | D12 | 完成 |
+| M6 | T6.3 新增 `test/serial-dispatch.test.ts`（旧数据归一；一名额被占 next 返回 undefined；claimGoalResume 占名额后 CAPACITY_FULL；多 pending 仅第一个 claim；释放后第二个才 claim；另含并发点击、连接重置恢复、无并发配置入口断言）（0.5d） | 工程师 | P1 | D13 | D13 | 完成 |
 | **QA P1a** | QA-2 P1a 段复测（U03/U04/U05/U13 链，含串行验收例）（0.5d） | 质量QA | P1 | D14 | D14 | 待办 |
 | **M7 U06 统一处理入口** | | | | | | |
 | M7 | T7.1 新增 `src/client/inspection.ts`：`inspectTask` 只读核实（会话存在/运行/Goal 匹配/各动作可用性+理由）（0.5d） | 工程师 | P1 | D15 | D15 | 待办 |

@@ -12,7 +12,7 @@ import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types
 import { resolveTaskModel, type TaskModelSelection } from '../model-policy.ts'
 import { filterTaskRows, type TaskFilter } from './queue-view.ts'
 
-type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open' | 'discover' | 'resumeGoal' | 'setConcurrency' | 'isAuthorized' | 'subscribeAuthorization' | 'getSyncState' | 'subscribeSync' | 'openAttempt' | 'openSessionById'> & {refresh: () => Promise<void>; modelCatalog: () => Promise<ModelCatalog>}
+type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open' | 'discover' | 'resumeGoal' | 'isAuthorized' | 'subscribeAuthorization' | 'getSyncState' | 'subscribeSync' | 'openAttempt' | 'openSessionById'> & {refresh: () => Promise<void>; modelCatalog: () => Promise<ModelCatalog>}
 export type BoardProps = PropsStore<typeof viewStore> & PropsRuntime<'shell.overlay'> &
   PropsHooks<{queueSettings: QueueSettingsSource, workspaces: {
     getSnapshot():WorkspaceSnapshot;subscribe(listener:()=>void):()=>void
@@ -135,9 +135,6 @@ export function QueueBoard(props:BoardProps) {
       <div className="gq-actions">
         <button type="button" onClick={newForm}>添加任务</button>
         <button type="button" disabled={discovering} onClick={()=>{void change(()=>props.operations.discover())}}>{discovering?'扫描中…':'刷新运行任务'}</button>
-        <label>最大并发 <select aria-label="最大并发任务数" value={q.maxConcurrent} onChange={e=>{void change(()=>props.operations.setConcurrency(Number(e.target.value)))}}>
-          {Array.from({length:8},(_,i)=>i+1).map(n=><option key={n} value={n}>{n}</option>)}
-        </select></label>
         <button type="button" className={queueEnabled?'gq-warn':'gq-primary'} disabled={!queueEnabled && (blockers.length>0 || discovering)} onClick={()=>{void change(()=>props.operations.enable(!queueEnabled))}}>
           {queueEnabled?'暂停队列':'启动队列'}
         </button>
@@ -145,9 +142,9 @@ export function QueueBoard(props:BoardProps) {
       </div>
     </header>
     <div className="gq-notes">
-      {queueEnabled?'队列已启用：按并发上限派发任务。':'队列未获当前客户端启动授权：不会启动下一项；已有任务不会被中断。'}
-      {busy?` 当前有 ${summary.occupied} 项运行／观察任务（启动 ${summary.starting} · 运行 ${summary.observedRunning} · 外部 ${summary.externalActivity}），最大并发 ${q.maxConcurrent}。`:''}
-      {summary.occupied>q.maxConcurrent&&<div className="gq-error">发现的运行任务已超过并发上限；不会强制结束已有 Session，也不会派发新任务。</div>}
+      {queueEnabled?'队列已启用：串行派发，至多 1 项占用执行。':'队列未获当前客户端启动授权：不会启动下一项；已有任务不会被中断。'}
+      {busy?` 当前有 ${summary.occupied} 项运行／观察任务（启动 ${summary.starting} · 运行 ${summary.observedRunning} · 外部 ${summary.externalActivity}）；串行模式：至多 1 项占用执行。`:''}
+      {summary.occupied>q.maxConcurrent&&<div className="gq-error">发现的运行任务已超过串行执行上限；不会强制结束已有 Session，也不会派发新任务。</div>}
       {blockers.length>0 && <div className="gq-error" role="alert">有 {blockers.length} 项异常任务尚未处理，已禁止启动后续任务。先查看旧 Session，明确选择重新排队或人工跳过。</div>}
       <div>目标模式以 DSH Goal 的 complete / blocked 为准；普通模式以已观察到的运行→空闲为准，不代表代码已通过人工验收。</div>
     </div>

@@ -6,7 +6,7 @@
 
 1. **无自动续跑**：启动、重连、重载后不授予新任务派发权。仅用户当前 Client 中明确点击「启动队列」才授权派发。已在运行的原 Session 可以自动读取并重新观察，但不重发命令。
 2. **Session ID 去重**：打开管理面板时用 DSH 官方 `sessions.refresh/list/retain` 发现正在运行的 Host Session。不能扫描外部进程，也不得导入 Subagent 作为独立主任务。发现的任务只观察，不自动创建 Prompt / Goal。
-3. **并发名额正确**：`maxConcurrent` 为 1–8 的整数，默认 1；`activeIds` 持久化活动占用集合。新任务派发必须先原子 claim，再确认容量；发现的运行任务占名额。降低上限不结束既有 Session。没有跨 Client / Host 全局锁，不得宣称全局并发保证。
+3. **串行派发正确**：`maxConcurrent` 恒为 1（U13：旧值 1–8 读取时归一，不提供并发配置入口）；`activeIds` 持久化活动占用集合。新任务派发必须先原子 claim，再确认容量；发现的运行任务占名额。外部运行会话超过名额时不结束既有 Session、不派发新任务。没有跨 Client / Host 全局锁，不得宣称全局并发保证。
 4. **异常不得跳过**：`interrupted/blocked/failed` 阻断新增派发，必须人工核实旧 Session 后重试、跳过或对符合条件的旧 Goal 明确执行恢复。普通模式不能在状态未知时偷偷重新发 Prompt。
 5. **标题来源真实，模型请求严格隔离**：标题可以留空。可选 `generateTitle=true` 时采用任务已固定并经原生 Session 模型投影确认的 provider/model/reasoningEffort，**无工具、无 task Session ID 的独立一次性 LLM 请求**，通过 `sessionTitle.rename()` 保存，不向 Agent inbox 追加 Prompt。`titleMaxChars` 必须是 8–80 的整数（默认 24），Host 截断模型输出。标题请求沿用 Host/模型输出预算，不固定为 128 tokens，不自动重试或降档。纯 `/goal` 不会触发原生首消息命名，未勾选时不能假称有 AI 标题；不能将 `displayTitle` 回退标签当作真正标题。标题生成失败不得重发任务、不得在回退中运行额外 Agent 工作。
 6. **状态所有权与兼容**：保留旧 `activeId` 和 version=1 队列读取兼容，新增 `activeIds/maxConcurrent/source` 必须与任务同一次 CAS 保存。不要抹除历史 Session ID，不得在损坏数据时回退为空队列。Goal 的权威数据只来自 DSH 原生 Goal 投影。

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Coordinator } from '../src/client/coordinator.ts'
 import { TEST_MODEL, testModels } from './model-fixture.ts'
-import { EMPTY_QUEUE,add,adopt,decode,claim,recover,next,setConcurrency,retry,type QueueSettings,type QueueState } from '../src/queue.ts'
+import { EMPTY_QUEUE,add,adopt,decode,claim,recover,next,retry,type QueueSettings,type QueueState } from '../src/queue.ts'
 import { QueueError } from '../src/errors.ts'
 
 const tick=async()=>{for(let i=0;i<16;i++)await new Promise(resolve=>setTimeout(resolve,0))}
@@ -89,14 +89,11 @@ test('migration: legacy activeId and tasks survive without a destructive reset',
   assert.equal(recovered.tasks[0]?.id,'a')
   assert.equal(recovered.enabled,false)
 })
-test('maxConcurrent reserves two slots, the third waits, lowering limit never cancels',()=>{
+test('U13 serial gate: one claimed task blocks the next; occupied slots are never cancelled',()=>{
   let q=add(add(add(EMPTY_QUEUE,input('A'),'a'),input('B'),'b'),input('C'),'c')
-  q=setConcurrency({...q,enabled:true},2)
-  q=claim(q,'a');q=claim(q,'b')
-  assert.deepEqual(q.activeIds,['a','b'])
-  assert.equal(next(q),undefined)
-  q=setConcurrency(q,1)
-  assert.deepEqual(q.activeIds,['a','b'])
+  q=claim({...q,enabled:true},'a')
+  assert.equal(q.maxConcurrent,1)
+  assert.deepEqual(q.activeIds,['a'])
   assert.equal(next(q),undefined)
 })
 test('imported running Session deduplicates and occupies a slot while queue stays paused',()=>{

@@ -1,4 +1,5 @@
 /** Persisted queue domain. Existing v1 snapshots are upgraded without deleting tasks. */
+import { QueueError } from './errors.ts'
 import { isModelSelection, type TaskModelSelection } from './model-policy.ts'
 export const VERSION = 1 as const
 export type TaskStatus = 'pending'|'starting'|'running'|'completed'|'blocked'|'failed'|'interrupted'|'skipped'
@@ -81,8 +82,9 @@ export function decode(value:unknown):QueueSettings|undefined {
   const q=value.queue
   if(typeof q.enabled!=='boolean'||typeof q.error!=='string'||!Array.isArray(q.tasks))return
   if(q.activeId!==undefined&&q.activeId!==null&&typeof q.activeId!=='string')return
-  const max=q.maxConcurrent===undefined?1:q.maxConcurrent
-  if(!Number.isInteger(max)||typeof max!=='number'||max<1||max>8)return
+  // U13: any legacy numeric maxConcurrent (1–8) normalizes to 1; non-numeric garbage still rejects.
+  const max=q.maxConcurrent
+  if(max!==undefined&&(typeof max!=='number'||!Number.isFinite(max)))return
   const activities=q.sessionActivity===undefined?[]:q.sessionActivity
   if(!Array.isArray(activities)||activities.some(x=>typeof x!=='string'||!x)
     ||new Set(activities).size!==activities.length)return
@@ -119,7 +121,7 @@ export function decode(value:unknown):QueueSettings|undefined {
     ||new Set(slots).size!==slots.length||slots.length!==running.length
     ||running.some(x=>!slots.includes(x)))return
   return {version:VERSION,queue:{
-    enabled:q.enabled,activeId:legacy(slots),activeIds:[...slots],maxConcurrent:max,
+    enabled:q.enabled,activeId:legacy(slots),activeIds:[...slots],maxConcurrent:1,
     tasks,sessionActivity:[...activities],error:q.error
   }}
 }
@@ -155,10 +157,6 @@ export function move(q:QueueState,id:string,offset:-1|1):QueueState{
   if(j<0||j>=tasks.length)return q
   ;[tasks[i],tasks[j]]=[tasks[j]!,tasks[i]!]
   return {...q,tasks}
-}
-export function setConcurrency(q:QueueState,maxConcurrent:number):QueueState{
-  if(!Number.isInteger(maxConcurrent)||maxConcurrent<1||maxConcurrent>8)throw Error('并发任务数必须是 1–8 的整数')
-  return {...q,maxConcurrent}
 }
 /** U04 (design §6.1): occupancy is split by source so every counted slot stays visible. */
 export interface QueueSummary {
@@ -294,7 +292,9 @@ export function claimGoalResume(q:QueueState,id:string,goalId:string,now=Date.no
   if(!task||!['interrupted','blocked'].includes(task.status)||!task.goalMode||!task.sessionId)
     throw Error('旧 Goal 状态已改变或不能恢复，请刷新')
   if(task.goalId&&task.goalId!==goalId)throw Error('原 Goal ID 已改变，拒绝恢复')
-  if(q.activeIds.length+q.sessionActivity.length>=q.maxConcurrent)throw Error('当前并发名额已满')
+  // U13: maxConcurrent ≡ 1 — the sole execution slot is held by an active task or an observed Session.
+  if(q.activeIds.length+q.sessionActivity.length>=q.maxConcurrent)
+    throw new QueueError('CAPACITY_FULL','当前执行名额已被占用')
   if(q.activeIds.includes(id))throw Error('该 Goal 已处于恢复过程')
   return withActive({...q,tasks:q.tasks.map(t=>t.id===id
     ?amendAttempt(t,{status:'starting',goalId,detail:'旧 Goal 恢复命令准备中'},now):t)},

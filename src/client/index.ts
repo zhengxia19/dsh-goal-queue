@@ -50,7 +50,6 @@ export function apply(ctx: Context): void {
         enable: coordinator.enable.bind(coordinator), refresh: settings.refresh.bind(settings),
         discover: coordinator.discover.bind(coordinator),
         resumeGoal: coordinator.resumeGoal.bind(coordinator),
-        setConcurrency: coordinator.setConcurrency.bind(coordinator),
         open: coordinator.open.bind(coordinator),
         openAttempt: coordinator.openAttempt.bind(coordinator),
         openSessionById: coordinator.openSessionById.bind(coordinator),

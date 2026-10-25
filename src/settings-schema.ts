@@ -8,7 +8,10 @@ export const queueSchema = z.object({
     activeId: z.union([z.string(), z.const(null)]).default(null),
     activeIds: z.array(z.string()).default([]),
     sessionActivity: z.array(z.string()).default([]),
-    maxConcurrent: z.number().step(1).min(1).max(8).default(1),
+    // U13: serial dispatch — the field is retained for compatibility; any stored value
+    // (legacy 1–8) normalizes to 1 on validation (design's transform(() => 1), expressed
+    // with schemastery's static transform combinator). No error, no data loss.
+    maxConcurrent: z.transform(z.number().default(1), () => 1),
     error: z.string().default(''),
     tasks: z.array(z.object({
       id: z.string(), workspaceId: z.string(), title: z.string(), prompt: z.string(),
