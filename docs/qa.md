@@ -399,4 +399,26 @@
 
 ---
 
+## QA-10：实机缺陷修复复测（面板打不开 / React #310）
+
+- **测试标题**：QA-10 实机缺陷「点击任务队列按钮面板打不开」修复复测（hook 顺序违规）
+- **被测提交**：`e9260d1`（fix(client)，QueueBoard hooks 移至提前 return 之前 + 新增 `test/board-mount.test.ts` 挂载回归）
+- **优先级**：P0（实机必现缺陷，阻塞 C1–C9 全部实机项）
+
+| 测试编号 | 关联 | 前置条件 | 测试步骤 | 预期结果 | 实际结果 | 状态 |
+|---|---|---|---|---|---|---|
+| QA10-01 | 实机缺陷 | HEAD `e9260d1` | 独立跑三命令 + 探针 | 全绿 | typecheck ✅、**142/142**、build ✅、探针 7/7 | ✅ |
+| QA10-02 | 修复结构 | design 约束：不动组件结构 | 审计 QueueBoard 全部 hook 位置 | 所有 useState/useEffect/useSyncExternalStore 在 `!open`（83 行）与 not-ready（86 行）提前 return 之前；return 之后零 hook | 43–77 行全部前置，return 后无残留；改动仅移动五处 useState，最小修复 | ✅ |
+| QA10-03 | 红绿可复现 | 仅回退 QueueBoard.tsx 至 `e9260d1~1` | 重建 bundle 后单跑 board-mount | 修复前红：逐字 React #310 | `Error: Rendered more hooks than during the previous render.` + `slot entry crashed in 'shell.overlay'`——与老板实机症状（按钮在、点了打不开、槽位被错误替换）逐字吻合 | ✅ |
+| QA10-04 | 修复有效 | 恢复 `e9260d1` | 重建 bundle 后单跑 board-mount | 全绿 | 3/3 通过（含两个崩溃转换：ready 首击、open 时 loading→ready） | ✅ |
+| QA10-05 | 漏检根因 | 复盘 140 全绿为何漏检 | 核对 test/ 挂载覆盖 | 此前 QueueBoard 仅源码扫描/coordinator 级测试，从未渲染 open=false→true 转换 | 属实；board-mount 用 jsdom+真 Context+真 renderer bundle+真 slot registry 端到端挂载构建产物，补上该盲区 | ✅ |
+
+**QA-10 通过**。根因定位准确（5 个面板 useState 位于提前 return 之后，首开 25→30 hook 抛 React #310），修复最小且不触契约，挂载回归红绿独立复现。devDeps 新增 jsdom/zustand/immer/@types/jsdom 仅测试用，不入产物依赖。
+
+**在途项**：工程师工作区尚有未提交的第三个 mount 用例（error→ready 重试 + 面板开合跨分支 hook 一致性），QA 侧跑测时该用例绿（3/3），待其提交后并入台账。
+
+**提醒老板**：需重启 DPH Desktop 加载新 bundle（`lib/client.js` 已重建）后继续 C1–C9。
+
+---
+
 （以下段落由后续复测追加）
