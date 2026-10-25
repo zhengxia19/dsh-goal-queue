@@ -197,6 +197,15 @@ export class Coordinator {
     const attempt=this.queue().tasks.find(t=>t.id===id)?.attempts?.find(a=>a.id===attemptId)
     if(attempt?.sessionId)this.openSession?.(attempt.sessionId as SessionId)
   }
+  /** U04: open a tracked external Session by id; existence is checked against the trusted directory. */
+  async openSessionById(sessionId:string):Promise<void>{
+    if(this.directory){
+      const snapshot=await this.directory.list()
+      if(!snapshot.rows.some(r=>r.sessionId===sessionId))
+        throw new QueueError('SESSION_NOT_FOUND','会话已不存在')
+    }
+    this.openSession?.(sessionId as SessionId)
+  }
   async enable(enabled:boolean):Promise<void>{
     const intent=++this.controlIntent
     if(!enabled)this.setArmed(false)

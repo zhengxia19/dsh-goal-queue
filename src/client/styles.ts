@@ -34,4 +34,9 @@ export const styles = String.raw`
 .gq-history{margin-top:10px;padding:10px;border-top:1px solid var(--dsw-alias-border-l1,#7774);display:flex;flex-direction:column;gap:8px}
 .gq-history-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12px}
 .gq-history-row span{overflow-wrap:anywhere}
+.gq-external{margin-top:14px;padding:12px 15px;border:1px solid var(--dsw-alias-border-l2,#7775);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#222)}
+.gq-external h2{margin:0 0 6px;font-size:14px}
+.gq-external-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12px;margin-top:8px}
+.gq-external-row span{overflow-wrap:anywhere}
+.gq-external-row button{font-size:12px}
 `

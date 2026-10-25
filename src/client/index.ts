@@ -25,9 +25,10 @@ export function apply(ctx: Context): void {
   const settings = new HostQueueSettings(ctx)
   settings.start()
   const models = new HostTaskModels(ctx)
+  const directory = new HostSessionDirectory(ctx)
   const coordinator = new Coordinator(ctx.sessions as unknown as ISessions, ctx.workspaces, settings,
     () => connection.generation.getSnapshot() !== undefined,
-    (id) => ctx.uiWorkspace.openSession(id), models, new HostSessionDirectory(ctx))
+    (id) => ctx.uiWorkspace.openSession(id), models, directory)
   coordinator.start()
   ctx.effect(() => { const css = document.createElement('style'); css.dataset.plugin = 'goal-queue'
     css.textContent = styles; document.head.appendChild(css); return () => { css.remove() } }, 'goal-queue:style')
@@ -52,6 +53,7 @@ export function apply(ctx: Context): void {
         setConcurrency: coordinator.setConcurrency.bind(coordinator),
         open: coordinator.open.bind(coordinator),
         openAttempt: coordinator.openAttempt.bind(coordinator),
+        openSessionById: coordinator.openSessionById.bind(coordinator),
         isAuthorized: coordinator.isAuthorized.bind(coordinator),
         subscribeAuthorization: coordinator.subscribeAuthorization.bind(coordinator),
         getSyncState: coordinator.getSyncState.bind(coordinator),

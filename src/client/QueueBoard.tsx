@@ -12,7 +12,7 @@ import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types
 import { resolveTaskModel, type TaskModelSelection } from '../model-policy.ts'
 import { filterTaskRows, type TaskFilter } from './queue-view.ts'
 
-type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open' | 'discover' | 'resumeGoal' | 'setConcurrency' | 'isAuthorized' | 'subscribeAuthorization' | 'getSyncState' | 'subscribeSync' | 'openAttempt'> & {refresh: () => Promise<void>; modelCatalog: () => Promise<ModelCatalog>}
+type Ops = Pick<Coordinator, 'add' | 'edit' | 'remove' | 'move' | 'retry' | 'skip' | 'enable' | 'open' | 'discover' | 'resumeGoal' | 'setConcurrency' | 'isAuthorized' | 'subscribeAuthorization' | 'getSyncState' | 'subscribeSync' | 'openAttempt' | 'openSessionById'> & {refresh: () => Promise<void>; modelCatalog: () => Promise<ModelCatalog>}
 export type BoardProps = PropsStore<typeof viewStore> & PropsRuntime<'shell.overlay'> &
   PropsHooks<{queueSettings: QueueSettingsSource, workspaces: {
     getSnapshot():WorkspaceSnapshot;subscribe(listener:()=>void):()=>void
@@ -110,7 +110,7 @@ export function QueueBoard(props:BoardProps) {
     }catch(e){props.actions.error(message(e))}
     finally{setSubmitting(false)}
   }
-  const busy = q.activeIds.length+q.sessionActivity.length > 0
+  const busy = summary.occupied > 0
   const visibleRows=filterTaskRows(q,filter)
   const formatTime=(value:number)=>{
     const date=new Date(value)
@@ -137,8 +137,8 @@ export function QueueBoard(props:BoardProps) {
     </header>
     <div className="gq-notes">
       {queueEnabled?'队列已启用：按并发上限派发任务。':'队列未获当前客户端启动授权：不会启动下一项；已有任务不会被中断。'}
-      {busy?` 当前有 ${q.activeIds.length+q.sessionActivity.length} 项运行／观察任务，最大并发 ${q.maxConcurrent}。`:''}
-      {q.activeIds.length+q.sessionActivity.length>q.maxConcurrent&&<div className="gq-error">发现的运行任务已超过并发上限；不会强制结束已有 Session，也不会派发新任务。</div>}
+      {busy?` 当前有 ${summary.occupied} 项运行／观察任务（启动 ${summary.starting} · 运行 ${summary.observedRunning} · 外部 ${summary.externalActivity}），最大并发 ${q.maxConcurrent}。`:''}
+      {summary.occupied>q.maxConcurrent&&<div className="gq-error">发现的运行任务已超过并发上限；不会强制结束已有 Session，也不会派发新任务。</div>}
       {blockers.length>0 && <div className="gq-error" role="alert">有 {blockers.length} 项异常任务尚未处理，已禁止启动后续任务。先查看旧 Session，明确选择重新排队或人工跳过。</div>}
       <div>目标模式以 DSH Goal 的 complete / blocked 为准；普通模式以已观察到的运行→空闲为准，不代表代码已通过人工验收。</div>
     </div>
@@ -201,6 +201,14 @@ export function QueueBoard(props:BoardProps) {
           </div>}
         </article>
       })}
+      {q.sessionActivity.length>0&&<section className="gq-external" aria-label="外部活动">
+        <h2>外部活动（{q.sessionActivity.length}）</h2>
+        <p className="gq-detail">队列外观察到的运行 Session，占用执行名额；仅其权威停止后释放，不会被队列强制结束。</p>
+        {q.sessionActivity.map(id=><div className="gq-external-row" key={id}>
+          <span>Session：{id}</span>
+          <button type="button" onClick={()=>{void change(()=>props.operations.openSessionById(id))}}>打开</button>
+        </div>)}
+      </section>}
     </main>
     {editing!==null&&<div className="gq-modal-backdrop" onMouseDown={(e)=>{if(e.target===e.currentTarget)setEditing(null)}}>
       <form className="gq-modal" onSubmit={e=>{void onSave(e)}}>

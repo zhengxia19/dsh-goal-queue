@@ -157,11 +157,26 @@ export function setConcurrency(q:QueueState,maxConcurrent:number):QueueState{
   if(!Number.isInteger(maxConcurrent)||maxConcurrent<1||maxConcurrent>8)throw Error('并发任务数必须是 1–8 的整数')
   return {...q,maxConcurrent}
 }
-export function summarizeQueue(q:QueueState):{unresolved:number;running:number;pending:number}{
+/** U04 (design §6.1): occupancy is split by source so every counted slot stays visible. */
+export interface QueueSummary {
+  unresolved: number
+  pending: number
+  starting: number          // 队列内已 claim 未观察到运行
+  observedRunning: number   // 自有任务被观察到运行
+  externalActivity: number  // sessionActivity（外部会话活动）
+  occupied: number          // activeIds ∪ sessionActivity 去重计数
+}
+export function summarizeQueue(q:QueueState):QueueSummary{
+  const active=new Set(q.activeIds)
+  const activeSessions=new Set(q.tasks.filter(t=>active.has(t.id)&&t.sessionId).map(t=>t.sessionId as string))
+  const external=q.sessionActivity.filter(s=>!activeSessions.has(s))
   return {
     unresolved:q.tasks.filter(t=>UNRESOLVED.includes(t.status)).length,
-    running:q.activeIds.length+q.sessionActivity.length,
-    pending:q.tasks.filter(t=>t.status==='pending').length
+    pending:q.tasks.filter(t=>t.status==='pending').length,
+    starting:q.tasks.filter(t=>active.has(t.id)&&t.status==='starting').length,
+    observedRunning:q.tasks.filter(t=>active.has(t.id)&&t.status==='running').length,
+    externalActivity:external.length,
+    occupied:active.size+external.length
   }
 }
 export function next(q:QueueState):Task|undefined{

@@ -41,9 +41,9 @@
 | M3 | T3.2 `QueueBoard.tsx` 订阅 syncState 渲染新鲜度（initializing/scanning/fresh 时间/failed 原因），保留手动刷新（0.25d） | 工程师 | P1 | D6 | D6 | 完成 |
 | M3 | T3.3 新增 `test/discovery-scheduling.test.ts`（§7.2：面板开闭、首次延迟、重连、Subagent 排除、变化不丢）（0.5d） | 工程师 | P1 | D7 | D7 | 完成 |
 | **M4 U04 占用来源区分（R06）** | | | | | | |
-| M4 | T4.1 `queue.ts` `summarizeQueue` 拆分 starting/observedRunning/externalActivity/occupied；`index.ts` 新 op `openSessionById`（不存在→SESSION_NOT_FOUND）（0.5d） | 工程师 | P1 | D8 | D8 | 待办 |
-| M4 | T4.2 `QueueButton.tsx`「占用 N（启动 X · 运行 Y · 外部 Z）」；Board 新增「外部活动」区，每行「打开」（0.5d） | 工程师 | P1 | D8 | D8 | 待办 |
-| M4 | T4.3 新增 `test/session-activity.test.ts`（§7.5：删旧任务后活动仍可打开；仅权威 stop 释放；去重/超限不变）（0.5d） | 工程师 | P1 | D9 | D9 | 待办 |
+| M4 | T4.1 `queue.ts` `summarizeQueue` 拆分 starting/observedRunning/externalActivity/occupied；`index.ts` 新 op `openSessionById`（不存在→SESSION_NOT_FOUND）（0.5d） | 工程师 | P1 | D8 | D8 | 完成 |
+| M4 | T4.2 `QueueButton.tsx`「占用 N（启动 X · 运行 Y · 外部 Z）」；Board 新增「外部活动」区，每行「打开」（0.5d） | 工程师 | P1 | D8 | D8 | 完成 |
+| M4 | T4.3 新增 `test/session-activity.test.ts`（§7.5：删旧任务后活动仍可打开；仅权威 stop 释放；去重/超限不变）（0.5d） | 工程师 | P1 | D9 | D9 | 完成 |
 | **M5 U05 告警生命周期（R04/R07）** | | | | | | |
 | M5 | T5.1 schema/models：Task/Attempt 加 `titleError`（**先于 U07 schema 定稿**）；`claim` 归档上一 attempt 的 titleError（0.5d） | 工程师 | P1 | D10 | D10 | 待办 |
 | M5 | T5.2 `updateActive` 不再写 `q.error`；`title-command.ts` 失败写 `task.titleError`（0.25d） | 工程师 | P1 | D10 | D10 | 待办 |
