@@ -196,4 +196,34 @@
 
 ---
 
+## QA-5：M9/U08 段复测（工作区显式选择 + 保存后执行语义）
+
+- **测试标题**：U08 复测——不猜默认工作区、显式选择内联校验、保存按钮按授权态文案、外部 API 核验结论独立复核
+- **测试范围**：U08（`QueueBoard.tsx` `newForm()`/保存校验/按钮文案、design §11.2 唯一外部核验项）；PRD §7 链 7 工作区部分；边界 B1（不暗改授权规则）/B7（不改 DPH 内置代码）
+- **优先级**：P1
+- **被测提交**：`8ed63c3`（U08/M9）；QA-4 基线 `1ee2c2b`；工作树干净
+- **复测日期**：2026-10-25
+- **验证方式**：独立重跑 `typecheck` / `npm test` / `build`；原探针 R01–R07 复核；`git show 8ed63c3` 全量 diff 对照 design §U08 逐句核验；工程师外部核验结论由 QA 独立扫宿主公开类型复核
+
+### 测试用例表
+
+| 测试编号 | 关联用户故事 | 前置条件 | 测试步骤 | 预期结果 | 实际结果 | 状态 |
+|---|---|---|---|---|---|---|
+| QA5-01 | US-08 | HEAD=8ed63c3，工作树干净 | `npm run typecheck` | 无类型错误 | 通过 | ✅ 通过 |
+| QA5-02 | US-08 | 同上 | `npm test` 全量 | 137/137 全绿（136 + 新增 U08 断言 1 项） | tests 137 / pass 137 / fail 0 | ✅ 通过 |
+| QA5-03 | US-08 | 同上 | `npm run build` | 构建成功 | CJS+ESM 完成 | ✅ 通过 |
+| QA5-04 | 回归 | 同上 | 原探针 R01–R07 | 7/7 PASS 无回归 | 7/7 PASS | ✅ 通过 |
+| QA5-05 | US-08（R07 链工作区部分） | 多工作区含中文路径 | 审查 newForm + 静态断言 | 默认 `workspaceId=''`，源码不再出现 `workspaces.items[0]`，首项不被预选 | 断言在位且通过 | ✅ 通过 |
+| QA5-06 | US-08 | 表单未选工作区点保存 | 审查保存校验与渲染 | `formErrors.workspace='请选择工作区'` 内联 `role="alert"` 显示在字段下；select 原生 `required` 气泡移除；保存按钮不再 `!workspaceId` 前置禁用（保证内联错误可触发），其余门禁（submitting/catalog/modelError/超长）保留；选定即清错 | 与预期一致 | ✅ 通过 |
+| QA5-07 | US-08 | 各授权态 | 对照 design §U08 358 行逐字核验按钮文案 | `queueEnabled`(=`q.enabled && authorized`) 且 pending>0 →「加入运行中的队列」+提示「加入后将按可用名额执行」；pending=0 →「等待新任务，加入后执行」；未授权/未启用 →「保存任务」；requeueFor 场景保留「重新排队」（U06 权威命名）；旧裸「保存」标签防回流断言在位 | 四态文案与 design 逐字一致 | ✅ 通过 |
+| QA5-08 | design §11.2 | 宿主公开类型 | QA 独立扫 `@deepseek-ai` 全部 .d.ts | `UiWorkspace` 接口仅动作（openSession/openWorkspace/connectWorkspace/forkSession/startSession/archive/reorder），无当前工作区 getter；`UiWorkspaceService.selection` 为 `private readonly`；`startSession` 缺省「inherits the current or most recent Workspace」是内部行为不可读；全类型包 grep `currentWorkspace/getWorkspace/workspaceSelection` 零命中 | 工程师核验结论独立复核成立 → 显式选择兜底是 design 预设路径 | ✅ 通过 |
+| QA5-09 | B1/B7 | diff 审查 | `git show 8ed63c3` 文件清单 | 仅 `QueueBoard.tsx` 表单区 + 测试 + tasks.md 勾选；授权规则、派发规则、DPH 内置代码零改动 | 3 files +30/−5，符合 | ✅ 通过 |
+| QA5-10 | 口径 | design §U08 原文 | 文案裁定核对 | design 358 行原文「等待新任务，加入后执行」为权威；Chief 点名消息中「加入后会执行」系转述笔误，实现按 design 逐字正确，无需改动 | 确认，无需裁定 | ✅ 通过 |
+
+### 结论
+
+**QA-5（M9/U08 段）通过**。不猜默认工作区、显式选择 + 内联校验、按钮文案四态与 design §U08 逐字一致；§11.2 唯一外部核验项（uiWorkspace 无当前工作区读取途径）经 QA 独立扫描宿主公开类型复核成立，显式选择兜底即 design 预设路径。无阻塞 bug，无新观察项。
+
+---
+
 （以下段落由后续复测追加）
