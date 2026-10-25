@@ -150,4 +150,50 @@
 
 ---
 
+## QA-4：M8/U07 段复测（派发阶段 CAS + 失败三分类）
+
+- **测试标题**：U07 复测——phase 与业务数据同次 CAS、可证明重排全链路、dispatch 失败三分类、旧数据不伪造
+- **测试范围**：U07（`queue.ts` `applyPhase`/`claim`/`setTaskModel`/`setSessionId`/`markModelConfirmed`/`markCommandSubmitted`/decode 校验、`coordinator.ts` dispatch 阶段写入与 catch 三分类、`settings-schema.ts` phase 校验、`inspection.ts` OBS-8 闭环）；PRD §7 链 7 的 CAS/回包丢失部分；边界 B1（不自动重跑）/B2（孤儿 Session 处置）/B4（证据不伪造）
+- **优先级**：P1
+- **被测提交**：`05d8b7b`（U07/M8）；QA-3 基线 `4a9ad5c`（含 design rev.1.2 `31df308` OBS-7 裁定）；工作树干净
+- **复测日期**：2026-10-25
+- **验证方式**：独立重跑 `typecheck` / `npm test` / `build`；原探针 R01–R07 复核；代码对照 design §5/§6.1/§8.4/§U07 逐项审查；`git show` 核对既有测试适配是否仅签名级
+
+### 测试用例表
+
+| 测试编号 | 关联用户故事 | 前置条件 | 测试步骤 | 预期结果 | 实际结果 | 状态 |
+|---|---|---|---|---|---|---|
+| QA4-01 | US-07 | HEAD=05d8b7b，工作树干净 | `npm run typecheck` | 无类型错误 | 通过 | ✅ 通过 |
+| QA4-02 | US-07 | 同上 | `npm test` 全量 | 136/136 全绿（128 + 新增 dispatch-phase 8 项） | tests 136 / pass 136 / fail 0 | ✅ 通过 |
+| QA4-03 | US-07 | 同上 | `npm run build` | 构建成功 | CJS+ESM 完成 | ✅ 通过 |
+| QA4-04 | 回归 | 同上 | 原探针 R01–R07 | 7/7 PASS 无回归 | 7/7 PASS | ✅ 通过 |
+| QA4-05 | US-07/B4 | 新 claim / legacy 旧数据 | claim 后查 phase；decode 无 phase 旧任务 | claim 记 `phase:'claimed'`（Attempt 与任务镜像双写）；旧任务/旧 Attempt `phase=undefined` 不伪造 | 断言全过 | ✅ 通过 |
+| QA4-06 | US-07 | 活跃任务 | setTaskModel(…,`precheck`) → setSessionId(…,`session_created`) → markModelConfirmed → markCommandSubmitted → JSON 往返 decode | 每次 phase 与业务数据（modelSelection/sessionId）同一状态拷贝写入；持久化往返 phase 保留；同一 Attempt 内单调不回退（command_submitted 后再 markModelConfirmed 不降级） | 断言全过 | ✅ 通过 |
+| QA4-07 | US-07 | 各阶段失败任务 | requeueEdited 对 claimed/precheck（无 sessionId）、session_created、model_confirmed、command_submitted、legacy | 仅 claimed/precheck 且无 sessionId 放行（回 pending、证据保留）；其余全部抛 `REQUEUE_EDIT_NOT_PROVEN`；legacy 保守拒绝 | 断言全过（M7 判定在 phase 写入后全链路生效） | ✅ 通过 |
+| QA4-08 | US-07/B1 | phase=command_submitted 失败 | requeueEdited → retry → claim | 简化重排拒绝；用户 retry 开新 Attempt（计数 2）、旧 Attempt `command_submitted` 证据归档不动；队列保持暂停不自动重发 | 断言全过 | ✅ 通过 |
+| QA4-09 | US-07（链7） | 创建前失败（非法模型） | coordinator 全流程 dispatch 失败 | status=failed、detail 含「已确认未提交，可修改后重新排队」、attempt phase=claimed；requeueEdited 放行 | 断言全过 | ✅ 通过 |
+| QA4-10 | US-07（链7） | Session 已建、select 失败 | coordinator 全流程 | status=interrupted、detail 含「会话已创建、命令未提交，需处置原会话」、phase=session_created；简化重排拒绝 | 断言全过 | ✅ 通过 |
+| QA4-11 | US-07（链7/B1） | /goal 回包丢失 | coordinator 全流程 | status=interrupted、detail 含「命令提交状态未知，保守处理，不会自动重发」、phase=command_submitted；`enabled=false` 保持暂停、无自动重发 | 断言全过 | ✅ 通过 |
+| QA4-12 | US-07/B1 | 代码 + 静态断言 | markCommandSubmitted 写入时序 | 先于 `held.session.command('/goal')` 与 `held.session.prompt(` 持久化；`SUBMISSION_UNKNOWN` 码在位；abandon 路径文案对齐三分类 | 静态断言测试 + QA 复核一致 | ✅ 通过 |
+| QA4-13 | US-07/B2 | create 成功但 setSessionId 持久化失败 | 分类逻辑审查 + recovery-regression 既有断言 | 叠加本地 created 事实按「会话已创建」分类 interrupted（孤儿 Session 需处置，不回落 pending）；recovery-regression 测试未改动未弱化（不在提交文件清单） | 修正方向保 B2/T04 语义，见 OBS-10 | ✅ 通过 |
+| QA4-14 | 契约 | 代码审查 | decode/schema 对 phase 的校验 | 任务级与 Attempt 级 phase 均校验（非法值整包拒绝、undefined 允许）；`updateActive` forbidden 列表加入 `phase` 防旁路改写 | settings-schema.ts:25/33、queue.ts decode 一致 | ✅ 通过 |
+| QA4-15 | 契约 | 代码审查 | design §8.4 状态机迁移对照 | claimed→precheck→session_created→model_confirmed→command_submitted 全部经 CAS；失败边见 OBS-9 | 迁移与守卫一致 | ✅ 通过 |
+| QA4-16 | OBS-8 | inspection.ts | slotTaken 判定 | 改走 `summarizeQueue(q).occupied >= maxConcurrent`，与 Board/派发闸门同口径 | 已闭环 | ✅ 通过 |
+| QA4-17 | OBS-7 | design rev.1.2（`31df308`） | 架构师裁定核对 | 「不得引入持久 retain；瞬时 retain 读投影即口径」——与 `goalOf` 实现一致 | 已闭环 | ✅ 通过 |
+| QA4-18 | 回归 | 既有测试适配 | `git show` 核对 alert-lifecycle/model-selection/queue.test | 仅 `setSessionId`/`setTaskModel` 加 phase 实参，断言语义不变 | 纯签名级 | ✅ 通过 |
+
+### 结论
+
+**QA-4（M8/U07 段）通过**。phase 与业务数据同次 CAS 落地（丢失写入不可能拆对）、可证明重排按持久证据判定、提交前先持久化 `command_submitted` 保证回包丢失不自动重发（B1）、旧数据 phase 不伪造（B4）、孤儿 Session 按「会话已创建」处置（B2）。无阻塞 bug。
+
+### 观察项（非阻塞）
+
+| 编号 | 级别 | 内容 | 建议 |
+|---|---|---|---|
+| OBS-9 | 低 | design §8.4 状态机图失败边统一标 `failed`，实现按语义取 `interrupted`（session_created/model_confirmed/command_submitted）与 `failed`（claimed/precheck）——与 B2、T04 既有语义一致 | 请架构师修正 §8.4 图标注（failed→interrupted 按阶段区分） |
+| OBS-10 | 低 | 三分类叠加「本地 created 事实」修正（create 成功但持久化失败按会话已创建分类）：方向保 B2/T04，但 design §U07 只写「按持久 phase 证据」 | 请架构师在 §U07/§8.4 补一句「同次派发内可叠加本地 create 事实」即闭环 |
+| OBS-11 | 低 | design §U07 分类文案仍写「可编辑后重新排队」（rev.1.1 未同步该行），实现按权威命名「可修改后重新排队」；另 `SUBMISSION_UNKNOWN` 码现仅作 message 来源，码本身不持久化不上 UI（design 未要求） | 请架构师同步文案口径；码口径如需上 UI 请明示 |
+
+---
+
 （以下段落由后续复测追加）
