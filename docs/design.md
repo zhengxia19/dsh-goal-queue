@@ -1,6 +1,6 @@
 # 系统设计文档 — dsh-goal-queue U01–U13 变更实施
 
-- 版本：1.1（2026-10-24；rev.1.1：修正 U06 动作命名以对齐清单 §5 对照表与 PRD US-06、补 `GoalGateway` 契约、注明 `attempt.phase` schema 提前至 U06 落地）
+- 版本：1.2（2026-10-25；rev.1.2：OBS-7 裁定——`GoalGateway` 措辞改为「不得引入持久 retain/claim/写入」，瞬时 retain 读投影即口径；rev.1.1：修正 U06 动作命名以对齐清单 §5 对照表与 PRD US-06、补 `GoalGateway` 契约、注明 `attempt.phase` schema 提前至 U06 落地）
 - 上游：`docs/prd.md`（产品经理）、`docs/项目优化分析与变更清单_2026-10-24.md`（需求基线）
 - 基线：分支 main，HEAD `69b675f`，版本 0.3.2-preview.0，适配 DPH v0.2.1-rc.2
 - 下游：`docs/tasks.md`（项目经理）
@@ -251,7 +251,7 @@ export interface TaskInspection {
   warnings: string[]
 }
 export interface GoalGateway {
-  /** 只读：取该 Session 自身 goal 投影；无 Goal 返回 null。零写入、不占执行名额、不 retain。 */
+  /** 只读：取该 Session 自身 goal 投影；无 Goal 返回 null。零写入、不占执行名额、不引入持久 retain。 */
   goalOf(sessionId: string): Promise<{ id: string; phase?: string } | null>
 }
 export function inspectTask(id: string, deps: {
@@ -261,7 +261,9 @@ export function inspectTask(id: string, deps: {
 }): Promise<TaskInspection>
 ```
 
-（rev.1.1：`GoalGateway` 为工程师按本节需要自定的最小只读接口，架构师确认并入契约——实现走既有 `session.projections.faceOf('goal')` 读取，不得引入写入、claim 或 retain。）
+（rev.1.1：`GoalGateway` 为工程师按本节需要自定的最小只读接口，架构师确认并入契约——实现走既有 `session.projections.faceOf('goal')` 读取，不得引入写入、claim 或持久 retain。）
+
+（rev.1.2 · OBS-7 裁定：读投影本身需要 retain 才能取到 face，故契约口径为「不得引入**持久** retain/claim/写入」——瞬时 retain→读投影→立即释放（不跨调用持有、不入队列名额账）即符合口径，工程师现实现即正确口径。）
 
 只读：读目录快照 + 队列 + goal 投影；不写状态、不 claim。`canRequeueEdited` 复用 6.1 的可证明条件。
 
