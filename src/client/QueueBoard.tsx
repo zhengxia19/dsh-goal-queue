@@ -129,11 +129,13 @@ export function QueueBoard(props:BoardProps) {
   const selectedModel=catalog?.groups.find(p=>p.id===displayedSelection?.provider)?.models.find(m=>m.id===displayedSelection?.model)
   let modelError=''
   if(catalog)try{if(!followDefault&&!selection)throw Error('请选择执行模型');resolveTaskModel(catalog,followDefault?catalog.default:selection)}catch(e){modelError=message(e)}
+  // U10: a disabled save must state its own reason instead of leaving the user guessing.
+  const saveBlock=submitting?'正在保存':!catalog?(catalogError||'正在读取 Host 模型目录'):modelError?modelError:(titleMode==='ai'&&prompt.length>MAX_TITLE_INPUT_CHARS)?'任务内容过长，无法再生成标题；可关闭 AI 标题后保存':''
   const onSave = async (event:FormEvent)=>{
     event.preventDefault()
     if(submitting)return
     if(titleMode==='ai'&&prompt.length>MAX_TITLE_INPUT_CHARS){
-      props.actions.formError('title','模型标题最多接受 8000 个 UTF-16 代码单元，请缩短题词或关闭标题生成')
+      props.actions.formError('title','任务内容过长，无法再生成标题；可关闭 AI 标题后保存')
       return
     }
     if(!workspaceId){
@@ -262,20 +264,13 @@ export function QueueBoard(props:BoardProps) {
     {editing!==null&&<div className="gq-modal-backdrop" onMouseDown={(e)=>{if(e.target===e.currentTarget){setEditing(null);setRequeueFor(null)}}}>
       <form className="gq-modal" onSubmit={e=>{void onSave(e)}}>
         <h2>{editing==='new'?'添加任务':requeueFor?'修改后重新排队':'编辑待执行任务'}</h2>
-        <fieldset className="gq-title-mode">
-          <legend>标题</legend>
-          <label className="gq-check"><input type="radio" name="titleMode" checked={titleMode==='none'} onChange={()=>setTitleMode('none')}/> 留空（不额外生成，不增加模型请求）</label>
-          <label className="gq-check"><input type="radio" name="titleMode" checked={titleMode==='manual'} onChange={()=>setTitleMode('manual')}/> 手动填写</label>
-          <label className="gq-check"><input type="radio" name="titleMode" checked={titleMode==='ai'} onChange={()=>setTitleMode('ai')}/> AI 生成（一次额外模型请求）</label>
-          {titleMode==='manual'&&<input maxLength={200} value={title} onChange={e=>setTitle(e.target.value)} placeholder="填写任务标题"/>}
-          {titleMode==='ai'&&<p role="status">保存后由模型根据任务说明生成标题；已填写的手动标题会保留为草稿，切回手动填写可继续使用。</p>}
-          {formErrors.title&&<p role="alert">{formErrors.title}</p>}
-        </fieldset>
+        <label>任务说明<textarea required value={prompt} onChange={e=>setPrompt(e.target.value)} rows={7} placeholder="说明任务、约束和验收标准"/></label>
         <label>执行工作区<select value={workspaceId} onChange={e=>{setWorkspaceId(e.target.value);if(e.target.value)props.actions.formError('workspace','')}}>
           <option value="">选择工作区</option>
           {workspaces.items.map(w=><option key={w.workspaceId} value={w.workspaceId}>{w.title} — {w.path}</option>)}
         </select></label>
         {formErrors.workspace&&<p role="alert">{formErrors.workspace}</p>}
+        <label className="gq-check"><input type="checkbox" checked={goalMode} onChange={e=>setGoalMode(e.target.checked)}/> 使用 DSH 原生目标模式（/goal）</label>
         {!catalog&&<p role="status">{catalogError||'正在读取 Host 模型目录…'}</p>}
         <button type="button" onClick={()=>setCatalogRevision(n=>n+1)}>刷新模型目录</button>
         {catalog?.failures.map(f=><p key={f.id} role="alert">模型目录读取失败：{f.name}。请检查 Host 配置。</p>)}
@@ -295,15 +290,25 @@ export function QueueBoard(props:BoardProps) {
           {selectedModel?.reasoning?.efforts.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
         </select></label>
         {modelError&&<p role="alert">{modelError}</p>}
-        <p>标题生成使用与任务相同的模型和推理强度。未选择“派发时使用 Host 默认”时，保存即固定配置。Harness 原生模型选择也会更新 Host 默认模型；恢复已有 Session 不重新设置模型。</p>
-        <label className="gq-check"><input type="checkbox" checked={goalMode} onChange={e=>setGoalMode(e.target.checked)}/> 使用 DSH 原生目标模式（/goal）</label>
-        <label>任务说明<textarea required value={prompt} onChange={e=>setPrompt(e.target.value)} rows={7} placeholder="说明任务、约束和验收标准"/></label>
-        {titleMode==='ai'&&<p role={prompt.length>MAX_TITLE_INPUT_CHARS?'alert':'status'}>标题辅助请求最多 {MAX_TITLE_INPUT_CHARS} 个 UTF-16 代码单元，当前 {prompt.length}。超限可切回留空或手动填写，原任务说明不会被截断。</p>}
-        <p>留空与手动填写均不产生额外模型请求；AI 生成通过 Host 无工具的独立模型请求（与任务同模型、同推理强度，8–80 字符硬上限），不向任务 Session 发送额外执行指令。</p>
+        <p>派发时设置模型也会更新 Host 默认模型；恢复已有 Session 不重新设置模型。</p>
+        <fieldset className="gq-title-mode">
+          <legend>标题</legend>
+          <label className="gq-check"><input type="radio" name="titleMode" checked={titleMode==='none'} onChange={()=>setTitleMode('none')}/> 留空（不额外生成，不增加模型请求）</label>
+          <label className="gq-check"><input type="radio" name="titleMode" checked={titleMode==='manual'} onChange={()=>setTitleMode('manual')}/> 手动填写</label>
+          <label className="gq-check"><input type="radio" name="titleMode" checked={titleMode==='ai'} onChange={()=>setTitleMode('ai')}/> AI 生成（一次额外模型请求）</label>
+          {titleMode==='manual'&&<input maxLength={200} value={title} onChange={e=>setTitle(e.target.value)} placeholder="填写任务标题"/>}
+          {titleMode==='ai'&&<p role="status">保存后由模型根据任务说明生成标题；已填写的手动标题会保留为草稿，切回手动填写可继续使用。</p>}
+          {titleMode==='ai'&&prompt.length>MAX_TITLE_INPUT_CHARS&&<p role="alert">任务内容过长，无法再生成标题；可关闭 AI 标题后保存</p>}
+          {formErrors.title&&<p role="alert">{formErrors.title}</p>}
+        </fieldset>
         <details className="gq-advanced"><summary>高级选项</summary>
           {titleMode==='ai'&&<label>AI 标题最长字符数（一次额外模型请求） <input type="number" min={MIN_TITLE_CHARS} max={MAX_TITLE_CHARS} step={1} required value={titleMaxChars} onChange={e=>setTitleMaxChars(Number(e.target.value))}/></label>}
+          <details><summary>标题生成帮助</summary>
+            <p>留空与手动填写均不产生额外模型请求；AI 生成通过 Host 无工具的独立模型请求（与任务同模型、同推理强度，8–80 字符硬上限），不向任务 Session 发送额外执行指令。标题辅助请求最多接受 {MAX_TITLE_INPUT_CHARS} 个 UTF-16 代码单元；任务说明正文不会被截断。</p>
+            <p>未选择“派发时使用 Host 默认”时，保存即固定模型配置。</p>
+          </details>
         </details>
-        <footer>{formErrors.form&&<p role="alert">保存失败：{formErrors.form}</p>}{queueEnabled&&!requeueFor&&summary.pending>0&&<p role="status">加入后将按可用名额执行</p>}<button type="button" onClick={()=>{setEditing(null);setRequeueFor(null)}}>取消</button><button className="gq-primary" disabled={submitting||!catalog||Boolean(modelError)||(titleMode==='ai'&&prompt.length>MAX_TITLE_INPUT_CHARS)} type="submit">{requeueFor?'重新排队':queueEnabled?(summary.pending===0?'等待新任务，加入后执行':'加入运行中的队列'):'保存任务'}</button></footer>
+        <footer>{formErrors.form&&<p role="alert">保存失败：{formErrors.form}</p>}{queueEnabled&&!requeueFor&&summary.pending>0&&<p role="status">加入后将按可用名额执行</p>}{saveBlock&&<p role="status">暂不能保存：{saveBlock}</p>}<button type="button" onClick={()=>{setEditing(null);setRequeueFor(null)}}>取消</button><button className="gq-primary" disabled={submitting||!catalog||Boolean(modelError)||(titleMode==='ai'&&prompt.length>MAX_TITLE_INPUT_CHARS)} type="submit">{requeueFor?'重新排队':queueEnabled?(summary.pending===0?'等待新任务，加入后执行':'加入运行中的队列'):'保存任务'}</button></footer>
       </form>
     </div>}
   </div>,document.body)

@@ -192,3 +192,28 @@ test('U09: one title control with three modes; the default never adds a model re
   assert.ok(src.includes("task.title || (task.goalMode ? '未命名目标' : '未命名任务')"),'missing title display per design §U09')
   assert.ok(!src.includes('等待 DSH 自动生成标题')&&!src.includes('未命名目标任务'),'stale title placeholders must not return')
 })
+test('U10: form order, inline errors, stated save blocks, and jargon moved to help',()=>{
+  const src=readFileSync(new URL('../src/client/QueueBoard.tsx',import.meta.url),'utf8')
+  const form=src.slice(src.indexOf('<form className="gq-modal"'),src.indexOf('</form>'))
+  // Design §U10 order: prompt → workspace → execution mode → model & reasoning → title → advanced.
+  let pos=-1
+  for(const marker of ['任务说明<textarea','执行工作区<select','使用 DSH 原生目标模式','执行模型<select','推理强度<select','<legend>标题</legend>','<details className="gq-advanced">']){
+    const at=form.indexOf(marker)
+    assert.ok(at>pos,'form order broken at: '+marker)
+    pos=at
+  }
+  // Over-limit copy per design; no advice to shorten or delete the body, and the body is never truncated.
+  assert.ok(src.includes('任务内容过长，无法再生成标题；可关闭 AI 标题后保存'),'design over-limit copy in place')
+  assert.ok(!src.includes('请缩短题词'),'no shorten-the-body advice')
+  assert.ok(src.includes('任务说明正文不会被截断'),'long prompts are stated as untruncated')
+  // The one-line model side-effect note stays visible in the form body.
+  assert.ok(form.includes('派发时设置模型也会更新 Host 默认模型'),'side-effect note visible in the form')
+  // A disabled save states its own reason.
+  assert.ok(src.includes('暂不能保存：'),'a disabled save explains itself')
+  // Implementation jargon (UTF-16) lives only inside help/details.
+  const detailsAt=form.indexOf('<details')
+  const utf=form.indexOf('UTF-16')
+  assert.ok(utf===-1||(detailsAt!==-1&&detailsAt<utf),'UTF-16 only inside details')
+  // Save failures stay inline in the form footer, never only the global bar.
+  assert.ok(src.includes('保存失败：'),'form-level failure renders inline')
+})

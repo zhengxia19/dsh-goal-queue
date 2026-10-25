@@ -8,12 +8,12 @@ See **[Chinese usage guide](README.zh.md)** for operating instructions, installa
 
 - On opening the queue overlay, refresh the official DSH Session catalog; import Host-reported running non-subagent Sessions by exact Session ID without re-submitting a prompt or a Goal.
 - Observe imported Sessions and original queue Sessions, with duplicate suppression and original Session links.
-- Select a maximum concurrent count **1–8**, default **1**. Imported running Sessions occupy slots. Lowering the limit does not cancel already running Sessions.
+- Serial dispatch: the concurrency cap is fixed at **1**; at most one queue task or observed running Session holds the execution slot at any time. Imported running Sessions occupy the slot. The limit cannot be raised, and occupancy never cancels running Sessions.
 - Manually add and reorder tasks from registered Workspaces. New tasks create their own Session, using ordinary prompt or native `/goal`.
 - Choose a model and supported reasoning effort per task from the official Host catalog. New tasks freeze the complete selection on save; explicitly following the dispatch-time Host default remains available. Titles use the same selection as task execution.
 - Restart / reconnect never grants new dispatch authorization. Persisted active jobs are marked interrupted, then the overlay scan can reattach a Host-confirmed running Session without replay.
 - Explicitly resume an interrupted, idle Goal in its **original Session** with native `/goal resume`. Other interrupted jobs are manually investigated and either retried in a new Session or skipped.
-- Task titles can be empty. **Optional AI title generation** can be checked on the task form, with a configurable limit of **8–80 Unicode code points (24 by default)**. When checked, the Host runs a separate tool-free model request through the native DSH LLM service and persists the bounded result using the native Session Title service. It never adds a synthetic task prompt, including in pure `/goal` mode. When unchecked, ordinary Sessions retain DSH's native first-human-message title behavior; pure `/goal` still does not trigger that native provider.
+- Task titles use one control with three modes: **blank** (default; no extra model request), **manual**, and **AI generation** (one separate tool-free model request through the task's model selection, bounded to **8–80 Unicode code points, 24 by default**, configured under advanced options). Manual drafts survive mode switches. Tasks without a real title display as 未命名任务 / 未命名目标. AI generation persists the bounded result using the native Session Title service and never adds a synthetic task prompt, including in pure `/goal` mode.
 
 ## Non-goals and guarantees
 

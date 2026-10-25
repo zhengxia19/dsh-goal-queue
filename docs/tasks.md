@@ -70,8 +70,8 @@
 | M10 | T10.1 `QueueBoard.tsx` 单选留空/手动/AI；`settings.ts`/`title-policy.ts` 映射 none/manual→`generateTitle=false`；草稿保留；`titleMaxChars` 入高级选项；缺标题「未命名任务/未命名目标」（0.75d） | 工程师 | P2 | D24 | D24 | 完成（映射在表单构造处：`generateTitle:titleMode==='ai'`；settings.ts 无标题逻辑无需改；title-policy 复用 DEFAULT/MIN/MAX 常量） |
 | M10 | T10.2 `board-interactions.test.ts` 补标题三模式草稿断言；验证默认请求次数不增加（0.25d） | 工程师 | P2 | D24 | D24 | 完成 |
 | **M11 U10 表单顺序与局部错误** | | | | | | |
-| M11 | T11.1 表单顺序：任务说明→工作区→执行方式→模型与推理→标题→高级；错误内联 formErrors；模型副作用一行提示；实现术语入 details（0.5d） | 工程师 | P2 | D25 | D25 | 待办 |
-| M11 | T11.2 `board-interactions.test.ts` 补表单错误定位断言（0.25d） | 工程师 | P2 | D25 | D25 | 待办 |
+| M11 | T11.1 表单顺序：任务说明→工作区→执行方式→模型与推理→标题→高级；错误内联 formErrors；模型副作用一行提示；实现术语入 details（0.5d） | 工程师 | P2 | D25 | D25 | 完成 |
+| M11 | T11.2 `board-interactions.test.ts` 补表单错误定位断言（0.25d） | 工程师 | P2 | D25 | D25 | 完成 |
 | **M12 U11 Board 信息分层** | | | | | | |
 | M12 | T12.1 顶部：授权态/占用拆分/待执行/未处置（点击筛异常带计数）/同步新鲜度；主操作按 blockers 切换；行内只留主操作，次操作入「更多」；顶部提示精简（0.75d） | 工程师 | P2 | D26 | D26 | 待办 |
 | M12 | T12.2 `styles.ts` 新区块样式；窄窗与 100+ 记录可用性自查（不引入虚拟列表）（0.5d） | 工程师 | P2 | D27 | D27 | 待办 |
