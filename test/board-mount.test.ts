@@ -137,7 +137,16 @@ async function mount(describe: () => Promise<unknown>) {
   return {
     document: window.document,
     errors,
-    settle: (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)),
+    // React flushes click-driven updates on the scheduler queue, not synchronously;
+    // fixed sleeps went flaky under load, so every post-click assertion polls instead.
+    async waitFor(condition: () => boolean, timeoutMs = 3000): Promise<boolean> {
+      const deadline = Date.now() + timeoutMs
+      while (Date.now() < deadline) {
+        if (condition()) return true
+        await new Promise<void>(resolve => setTimeout(resolve, 10))
+      }
+      return condition()
+    },
     dispose() {
       root.unmount()
       console.error = savedConsoleError
@@ -155,29 +164,28 @@ function findButton(document: Document, pattern: RegExp) {
   return [...document.querySelectorAll('button')].find(b => pattern.test(b.textContent || ''))
 }
 
+const boardText = (document: Document) => document.querySelector('.gq-root')?.textContent ?? ''
+
 test('first click opens the board: no hook-order crash in the shell.overlay slot', async () => {
   const h = await mount(async () => readyResponse())
   try {
-    await h.settle(50)
     const button = findButton(h.document, /^任务队列/)
     assert.ok(button, 'sidebar button must render')
     assert.ok(!h.document.querySelector('.gq-root'), 'board is closed before the click')
     button!.click()
-    await h.settle(100)
-    const board = h.document.querySelector('.gq-root')
-    assert.ok(board, 'first click must open the board (React #310 regression)')
-    assert.match(board!.textContent!, /队列为空/)
+    assert.ok(await h.waitFor(() => Boolean(h.document.querySelector('.gq-root'))),
+      'first click must open the board (React #310 regression)')
+    assert.match(boardText(h.document), /队列为空/)
     assert.equal(h.document.querySelectorAll('[data-slot-error]').length, 0, 'no slot may crash')
     assert.deepEqual(h.errors.filter(x => x.includes('slot entry crashed')), [])
     // open -> close -> open: hook count must stay identical across every transition.
     const close = findButton(h.document, /^关闭$/)
     assert.ok(close, 'board must offer a close button')
     close!.click()
-    await h.settle(50)
-    assert.ok(!h.document.querySelector('.gq-root'), 'close must unmount the board')
+    assert.ok(await h.waitFor(() => !h.document.querySelector('.gq-root')), 'close must unmount the board')
     button!.click()
-    await h.settle(100)
-    assert.ok(h.document.querySelector('.gq-root'), 'reopen must work after a shorter render')
+    assert.ok(await h.waitFor(() => Boolean(h.document.querySelector('.gq-root'))),
+      'reopen must work after a shorter render')
     assert.equal(h.document.querySelectorAll('[data-slot-error]').length, 0, 'no slot may crash on reopen')
     assert.deepEqual(h.errors.filter(x => x.includes('slot entry crashed')), [])
   } finally { h.dispose() }
@@ -189,20 +197,49 @@ test('board survives loading -> ready while open: the second transition that use
   let describeCalls = 0
   const h = await mount(async () => { describeCalls += 1; return describeCalls === 1 ? pending : readyResponse() })
   try {
-    await h.settle(50)
     const button = findButton(h.document, /^任务队列/)
     assert.ok(button, 'sidebar button must render while settings load')
     assert.match(button!.textContent!, /\(加载中\)/)
     button!.click()
-    await h.settle(50)
-    const loading = h.document.querySelector('.gq-root')
-    assert.ok(loading, 'click while loading must open the loading board')
-    assert.match(loading!.textContent!, /正在读取 Host 任务队列配置/)
+    assert.ok(await h.waitFor(() => Boolean(h.document.querySelector('.gq-root'))),
+      'click while loading must open the loading board')
+    assert.match(boardText(h.document), /正在读取 Host 任务队列配置/)
     releaseDescribe(readyResponse())
-    await h.settle(150)
-    const board = h.document.querySelector('.gq-root')
-    assert.ok(board, 'the settings snapshot landing must not crash the open board')
-    assert.match(board!.textContent!, /队列为空/)
+    assert.ok(await h.waitFor(() => /队列为空/.test(boardText(h.document))),
+      'the settings snapshot landing must not crash the open board')
+    assert.equal(h.document.querySelectorAll('[data-slot-error]').length, 0, 'no slot may crash')
+    assert.deepEqual(h.errors.filter(x => x.includes('slot entry crashed')), [])
+  } finally { h.dispose() }
+})
+
+test('error -> ready via retry with the panel toggling: hooks stay consistent across every branch', async () => {
+  let describeCalls = 0
+  const h = await mount(async () => {
+    describeCalls += 1
+    return describeCalls === 1
+      ? { ok: false, error: { message: 'Host 暂时不可用' } }
+      : readyResponse()
+  })
+  try {
+    const button = findButton(h.document, /^任务队列/)
+    assert.ok(button, 'sidebar button must render over an error snapshot')
+    assert.ok(await h.waitFor(() => /\(配置错误\)/.test(button!.textContent || '')),
+      'the button must report the error snapshot once describe rejects')
+    button!.click()
+    assert.ok(await h.waitFor(() => Boolean(h.document.querySelector('.gq-root'))),
+      'click over an error snapshot must open the error board')
+    assert.match(boardText(h.document), /队列配置读取或保存失败/)
+    // Toggle closed and open again across the error branch, then recover to ready.
+    findButton(h.document, /^关闭$/)!.click()
+    assert.ok(await h.waitFor(() => !h.document.querySelector('.gq-root')), 'close must unmount the error board')
+    button!.click()
+    assert.ok(await h.waitFor(() => /队列配置读取或保存失败/.test(boardText(h.document))),
+      'reopen over the error branch must show the error board again')
+    const retry = findButton(h.document, /^重试读取配置$/)
+    assert.ok(retry, 'the error board must offer a retry')
+    retry!.click()
+    assert.ok(await h.waitFor(() => /队列为空/.test(boardText(h.document))),
+      'a successful retry must keep the open board mounted')
     assert.equal(h.document.querySelectorAll('[data-slot-error]').length, 0, 'no slot may crash')
     assert.deepEqual(h.errors.filter(x => x.includes('slot entry crashed')), [])
   } finally { h.dispose() }
