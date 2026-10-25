@@ -331,4 +331,72 @@
 
 ---
 
+## QA-9：U12 整合验收（T13.2）
+
+- **测试标题**：QA-9 U12 整合回归 + 观察项台账全量销账 + 老板实机确认清单
+- **被测提交**：`16dab87`（HEAD，工作树干净；含 U01–U11+U13 全部实施与 QA-1–QA-8 记录）
+- **测试范围**：全量回归（三命令 + 探针）、整合覆盖映射（迁移/去重/串行/恢复/空标题/多工作区）、OBS-1–OBS-12 逐条销账、实机项分离
+- **优先级**：P1（最终验收前置）
+
+### 全量回归
+
+| 项 | 结果 |
+|---|---|
+| `npm run typecheck` | ✅ |
+| `npm test` | **140/140 全绿**（17 个测试文件） |
+| `npm run build` | ✅ |
+| 探针 R01–R07（`behavior-probes.mjs`，模拟传输） | **7/7 PASS**（R01–R07 全部 Red→Green，OBS-3 闭环后跑通原探针） |
+
+### 整合覆盖映射（Chief 指定项 → 自动化证据）
+
+| 整合项 | 自动化覆盖 | 状态 |
+|---|---|---|
+| 旧数据迁移 | `settings.test.ts`（`maxConcurrent` 2–8 归一 1 不弹错不丢数据）、`queue.test.ts` decode（legacy 无 phase 不伪造、垃圾值拒绝）、`dispatch-phase.test.ts`（phase 迁移） | ✅ |
+| 去重 | `discovery-concurrency.test.ts`（同 sessionId 重复 adopt 不建第二行）、`session-activity.test.ts` + `summarizeQueue` 去重口径（OBS-8） | ✅ |
+| 串行并发=1 | `serial-dispatch.test.ts` 7 项（含恢复、重连、三连点击，全程 maxHolds≤1） | ✅ |
+| 恢复 | `recovery-regression.test.ts`（重启标 interrupted 不自动重发、Host 确认同 Session 仅恢复观察、T04 create 事实） | ✅ |
+| 空标题 | `title-generation.test.ts`（缺标题显示「未命名任务/未命名目标」、失败隔离 9 项） | ✅ |
+| 两工作区含中文路径 | 自动化覆盖**显式选择逻辑**（`board-interactions.test.ts` U08：无 `items[0]` 猜测、必选校验）；workspaceId 为不透明字符串，**真实中文路径工作区属实机项**（见清单 C3） | ✅（逻辑）/ 实机 |
+
+### 观察项台账销账（OBS-1–OBS-12）
+
+| 编号 | 内容 | 闭环证据 | 状态 |
+|---|---|---|---|
+| OBS-1 | attempt `detail` 覆写口径 | 产品经理本轮确认最终口径「detail=派发/执行诊断，titleError=标题生成诊断，分离归档、详情区按执行记录可见」；实现一致：`coordinator.ts:352` 标题失败只写 `titleError`、`queue.ts:223-225` claim 时 task 级 titleError 归档至末次 Attempt、派发诊断走 `detail` | ✅ 闭环 |
+| OBS-2 | prd/design 未入库 | 随 `2453fea` 入库（QA-2 核验） | ✅ |
+| OBS-3 | 原探针夹具崩溃 | 已注入 SessionDirectory 按契约适配，7/7 跑通（QA-2 起持续复核） | ✅ |
+| OBS-4 | syncState=failed 属 U03 顺延 | 随 M3 落地（QA-2 QA2-05 闭环） | ✅ |
+| OBS-5 | 历史行 attempt 级显示口径 | M12 详情折叠区逐条显示 `attempt.titleError`（标「标题生成失败：」）与 `attempt.detail`（QA-8 QA8-06） | ✅ |
+| OBS-6 | enable 未挂错误码 | M7 挂 `NOT_BOOTED`/`CONNECTION_CHANGED`/`UNRESOLVED_BLOCKING`（QA-3） | ✅ |
+| OBS-7 | `goalOf` 瞬时 retain | design rev.1.2（`31df308`）裁定口径，实现一致（QA-4） | ✅ |
+| OBS-8 | slotTaken 直加计数 | M8 改走 `summarizeQueue` 去重口径（QA-4） | ✅ |
+| OBS-9 | §8.4 图失败边 failed vs interrupted | design rev.1.3（`ec282b8`）状态图按语义分流，与实现一致 | ✅ |
+| OBS-10 | 本地 create 事实口径 | design rev.1.3 补「同次派发可叠加本地 create 事实」，与实现一致 | ✅ |
+| OBS-11 | `SUBMISSION_UNKNOWN` 码不上 UI | design rev.1.3 确认「码供程序/测试断言，UI 展示人读文案」即现实现 | ✅ |
+| OBS-12 | 副作用提示措辞 | design rev.1.4（`7efdb0b`）认可现文案并引句对齐 | ✅ |
+
+**台账 12/12 全部闭环。**
+
+### 老板 DPH Desktop 实机确认清单（T13.3，验收签字前完成）
+
+标注：〔自动=已覆盖，实机=必须实机确认〕
+
+| 编号 | 项 | 自动化状态 | 实机确认要点 |
+|---|---|---|---|
+| C1 | Desktop 安装/加载/卸载 | 自动=构建产物与 bundle 测试；**实机** | 插件在真实 DPH Desktop 安装、Board 打开、卸载干净 |
+| C2 | 真实 Host 发现与派发 | 自动=模拟传输全链；**实机** | 真实 `sessions.list` 发现、`/goal` 提交、Goal 投影观察 |
+| C3 | 两工作区含中文路径 | 自动=显式选择逻辑；**实机** | 新建任务不误选、中文路径工作区正确显示与派发 |
+| C4 | 键盘/焦点/Escape/返回位置/窄窗 | 自动=静态结构 + ≤720px 媒体查询 + 原生 `<details>`；**实机** | Tab 遍历、Enter 展开「更多/详情」、Escape 关面板、焦点归还、窄窗触控 ≥36px |
+| C5 | R03 时序（boot 前打开面板） | 自动=探针 R03 PASS；**实机** | 冷启动立即开面板不报错、boot 收敛后自动扫描 |
+| C6 | 串行派发实机观察 | 自动=`serial-dispatch` 7 项；**实机** | 多任务待执行启动队列后仅一个运行，处置后下一个才派发 |
+| C7 | 真实 Host 断连重连 | 自动=模拟 connectionReset；**实机** | 拔网/重启 Host → 目录 failed → 恢复后不自动重新授权、不自动重发 |
+| C8 | 100+ 记录滚动 | 未测（清单约定未实测不引入虚拟列表）；**实机** | 长列表滚动可用、无渲染卡顿 |
+| C9 | 详情区 attempt 级证据显示 | 自动=数据层 + 静态断言；**实机** | 「详情」展开后每次执行的标题失败/处置说明可读、完整 Session ID 可打开历史 Session |
+
+### 结论
+
+**QA-9（U12 整合验收）自动化部分通过**：全量回归 140/140 + 探针 7/7、整合覆盖映射全部有测试证据、观察项台账 12/12 闭环。剩余 C1–C9 中「实机」列为老板 DPH Desktop 确认项（T13.3），由 Chief 转老板执行；其中 C4/C8 完全无自动化，C1/C2/C3/C5/C6/C7/C9 自动化已覆盖逻辑层、实机确认真实环境行为。
+
+---
+
 （以下段落由后续复测追加）
