@@ -59,9 +59,9 @@
 | M7 | T7.2 `coordinator.ts` 加 `inspect`/`requeueEdited`；Board「查看并处理」面板：动作命名按清单 §5 对照表、去 `window.confirm`、notice 说明下一步；interrupted 非 goalMode 标「待核实」（0.75d） | 工程师 | P1 | D16 | D16 | 完成 |
 | M7 | T7.3 新增 `test/board-interactions.test.ts`（§7.6 U06 部分：重复点击、运行中拒绝处置、恢复 claim 不退化）（0.5d） | 工程师 | P1 | D17 | D17 | 完成 |
 | **M8 U07 派发阶段与可证明重排** | | | | | | |
-| M8 | T8.1 `models.ts` `DispatchPhase`；`queue.ts`：`claim` 记 phase、`setTaskModel`/`setSessionId` 增 phase 参同次 CAS、新增 `markModelConfirmed`/`markCommandSubmitted`/`requeueEdited`（不可证明抛 REQUEUE_EDIT_NOT_PROVEN）（0.75d） | 工程师 | P1 | D18 | D19 | 待办 |
-| M8 | T8.2 `coordinator.dispatch` 失败三分类（确认未提交/会话已建命令未提交/提交未知）+ Board 分类展示；旧数据 phase=undefined 不伪造（0.5d） | 工程师 | P1 | D19 | D19 | 待办 |
-| M8 | T8.3 新增 `test/dispatch-phase.test.ts`（§7.7：phase 同次 CAS 持久化；command_submitted 失败不重发）（0.5d） | 工程师 | P1 | D20 | D20 | 待办 |
+| M8 | T8.1 `models.ts` `DispatchPhase`；`queue.ts`：`claim` 记 phase、`setTaskModel`/`setSessionId` 增 phase 参同次 CAS、新增 `markModelConfirmed`/`markCommandSubmitted`/`requeueEdited`（不可证明抛 REQUEUE_EDIT_NOT_PROVEN）（0.75d） | 工程师 | P1 | D18 | D19 | 完成 |
+| M8 | T8.2 `coordinator.dispatch` 失败三分类（确认未提交/会话已建命令未提交/提交未知）+ Board 分类展示；旧数据 phase=undefined 不伪造（0.5d） | 工程师 | P1 | D19 | D19 | 完成 |
+| M8 | T8.3 新增 `test/dispatch-phase.test.ts`（§7.7：phase 同次 CAS 持久化；command_submitted 失败不重发）（0.5d） | 工程师 | P1 | D20 | D20 | 完成 |
 | **M9 U08 工作区显式选择** | | | | | | |
 | M9 | T9.1 `newForm` 默认 `workspaceId=''`；核验 uiWorkspace 公开 API 能否确认当前工作区（design §11.2 唯一外部核验项），不能确认则显式选择 + `formErrors.workspace`；保存按钮按授权态文案（0.5d） | 工程师 | P1 | D21 | D21 | 待办 |
 | M9 | T9.2 `board-interactions.test.ts` 补 U08 断言（0.25d） | 工程师 | P1 | D22 | D22 | 待办 |

@@ -1,6 +1,6 @@
 /** U06 (design §6.4): read-only verification before any disposition. Zero writes, no claim. */
 import { QueueError } from '../errors.ts'
-import { UNRESOLVED, attemptsOf, type QueueState } from '../queue.ts'
+import { UNRESOLVED, attemptsOf, summarizeQueue, type QueueState } from '../queue.ts'
 import type { SessionDirectory } from './directory.ts'
 
 /** Read-only view of the Goal projection owned by a Session (goal id + lifecycle phase). */
@@ -54,7 +54,8 @@ export async function inspectTask(id: string, deps: {
 
   const reasons: TaskInspection['reasons'] = {}
   // U13: the sole execution slot also gates resume — claimGoalResume would throw CAPACITY_FULL.
-  const slotTaken = q.activeIds.length + q.sessionActivity.length >= q.maxConcurrent
+  // OBS-8: occupancy uses summarizeQueue's deduplicated count — the same measure the Board shows.
+  const slotTaken = summarizeQueue(q).occupied >= q.maxConcurrent
   const resumable = ['interrupted', 'blocked'].includes(task.status) && task.goalMode
     && Boolean(task.sessionId) && sessionFound && !sessionRunning
     && goal !== undefined && ['active', 'paused', 'blocked'].includes(goal.phase)

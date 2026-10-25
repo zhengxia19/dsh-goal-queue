@@ -90,11 +90,11 @@ test('T08: two retries keep all three distinct execution Attempts and legacy mig
   assert.equal(decode({version:1,queue:q})?.queue.tasks[0]?.attempts?.length,1)
   q=retry(q,'h')
   q=claim({...q,enabled:true},'h')
-  q=setSessionId(q,'h','second-session')
+  q=setSessionId(q,'h','second-session','session_created')
   q=updateActive(q,'h',{status:'interrupted',detail:'retry failed'})
   q=retry(q,'h')
   q=claim({...q,enabled:true},'h')
-  q=setSessionId(q,'h','third-session')
+  q=setSessionId(q,'h','third-session','session_created')
   q=updateActive(q,'h',{status:'completed'})
   assert.deepEqual(q.tasks[0]?.attempts?.map(a=>a.sessionId),
     ['first-session','second-session','third-session'])

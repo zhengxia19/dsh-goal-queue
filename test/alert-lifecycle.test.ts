@@ -11,7 +11,7 @@ const input={workspaceId:'ws',prompt:'p',title:'t',goalMode:false}
 
 test('R04 链：任务失败/跳过/删除从不写全局 q.error；unresolved 仍暂停；系统级错误仍走 q.error',()=>{
   let q=claim({...add(EMPTY_QUEUE,input,'a'),enabled:true},'a')
-  q=setSessionId(q,'a','original-session')
+  q=setSessionId(q,'a','original-session','session_created')
   q=updateActive(q,'a',{status:'blocked',detail:'Old blocker'})
   assert.equal(q.error,'','任务失败不得写入全局错误条')
   assert.equal(q.enabled,false,'unresolved 阻断仍置 enabled=false')
@@ -29,13 +29,13 @@ test('R07 链：titleError 绑任务行；claim 归档进上一 attempt 且不�
   q=updateActive(q,'a',{titleError:'Title failed mid-run'})
   assert.equal(q.error,'','运行中的标题失败不写全局错误')
   assert.equal(q.tasks[0]!.titleError,'Title failed mid-run','标题失败绑定在任务行上')
-  q=setSessionId(q,'a','first-session')
+  q=setSessionId(q,'a','first-session','session_created')
   q=updateActive(q,'a',{status:'failed',titleError:'Title failed in first attempt',detail:'First attempt failed'})
   assert.equal(q.error,'','标题失败不污染全局错误条（R04 验收）')
   q=retry(q,'a')
   q=claim({...q,enabled:true},'a')
   assert.equal(q.tasks[0]!.titleError,undefined,'新 Attempt 开始后旧告警不再是当前告警')
-  q=setSessionId(q,'a','second-session')
+  q=setSessionId(q,'a','second-session','session_created')
   const attempts=q.tasks[0]!.attempts!
   assert.equal(attempts.length,2)
   assert.equal(attempts[0]!.titleError,'Title failed in first attempt','旧告警归档进产生它的那次 Attempt')

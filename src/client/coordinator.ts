@@ -9,8 +9,8 @@ import { resolveTaskModel, sameModel } from '../model-policy.ts'
 import { QueueError } from '../errors.ts'
 import type { SessionDirectory, DirectorySnapshot } from './directory.ts'
 import { inspectTask, type GoalGateway, type GoalRef, type TaskInspection } from './inspection.ts'
-import { UNRESOLVED,add,adopt,claim,decode,edit,flagForReview,move,next,recover,remove,requeueEdited,retry,
-  setSessionId,setTaskModel,skip,updateActive,updateTitle,releaseUnsubmittedClaim,claimGoalResume,trackSessionActivity,releaseSessionActivity,type QueueState,type Task,type TaskInput } from '../queue.ts'
+import { UNRESOLVED,add,adopt,claim,decode,edit,flagForReview,markCommandSubmitted,markModelConfirmed,move,next,recover,remove,requeueEdited,retry,
+  setSessionId,setTaskModel,skip,updateActive,updateTitle,releaseUnsubmittedClaim,claimGoalResume,trackSessionActivity,releaseSessionActivity,type QueueState,type Task,type TaskInput,type DispatchPhase } from '../queue.ts'
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
   interface SessionReferenceSourceMap { goalQueue: unknown }
 }
@@ -305,14 +305,15 @@ export class Coordinator implements GoalGateway {
   }
   private async dispatch(task:Task,authorization:number):Promise<void>{
     const generation=this.epoch
-    let created=false,submitted=false
+    // U07: tracks the last durably persisted phase; failure classification reads only this evidence.
+    let phase:DispatchPhase='claimed',created=false
     const revoked=()=>authorization!==this.controlIntent||!this.armed||!this.connected()
     const abandon=async():Promise<boolean>=>{
       if(generation!==this.epoch||this.closed){this.release(task.id);return true}
       if(!revoked())return false
       // Remote Session may exist. Preserve its ID and stop, never return it to pending.
       await this.fail(task.id,'interrupted',
-        '暂停或连接状态已变更；新 Session 已创建但任务执行命令未提交，请检查原会话')
+        '暂停或连接状态已变更；会话已创建、命令未提交，需处置原会话')
       return true
     }
     try{
@@ -321,17 +322,21 @@ export class Coordinator implements GoalGateway {
       if(!this.models)throw Error('Host 模型服务不可用')
       const modelSelection=resolveTaskModel(await this.models.catalog(),task.modelSelection)
       if(generation!==this.epoch||this.closed||!this.connected())return
-      await this.write(q=>setTaskModel(q,task.id,modelSelection))
+      await this.write(q=>setTaskModel(q,task.id,modelSelection,'precheck'))
+      phase='precheck'
       if(generation!==this.epoch||this.closed||!this.connected())return
       const sessionId=await this.sessions.create({workspaceId:workspace.workspaceId})
       created=true
       if(generation!==this.epoch||this.closed)return
-      await this.write(q=>setSessionId(q,task.id,sessionId))
+      await this.write(q=>setSessionId(q,task.id,sessionId,'session_created'))
+      phase='session_created'
       const held=await this.hold(task.id,sessionId,generation)
       if(await abandon())return
       const selected=await this.models.select(sessionId,modelSelection)
       if(!sameModel(selected,modelSelection))throw Error('Host 接受的模型配置与任务选择不一致')
       await confirmTaskModel(held.session,modelSelection,()=>generation===this.epoch&&!this.closed&&this.connected())
+      await this.write(q=>markModelConfirmed(q,task.id))
+      phase='model_confirmed'
       // Optional tool-free auxiliary LLM title request. It never submits a user prompt
       // to the task Session; a title failure must not silently replay or cancel the task.
       if(task.generateTitle){
@@ -351,13 +356,14 @@ export class Coordinator implements GoalGateway {
       // A manual model switch while the auxiliary call ran must not split title/task routing.
       const modelState=held.session.projections.faceOf('modelSelection').getSnapshot() as {next?:typeof modelSelection}|undefined
       if(!sameModel(modelState?.next,modelSelection))throw Error('任务提交前 Session 模型配置已变化，请人工核实')
+      // U07/B1: persist the phase BEFORE submitting; a lost response then proves "submission unknown".
+      await this.write(q=>markCommandSubmitted(q,task.id))
+      phase='command_submitted'
       if(task.goalMode){
-        submitted=true
         const response=await held.session.command('/goal '+task.prompt.trim())
         if(!response.ok)throw Error(response.error.message)
         if(!response.value.matched)throw Error('原生 /goal 命令不可用')
       }else{
-        submitted=true
         const response=await held.session.prompt([{type:'text',text:task.prompt}],'queue')
         if(!response.ok)throw Error(response.error.message)
       }
@@ -367,8 +373,15 @@ export class Coordinator implements GoalGateway {
     }catch(e){
       this.setArmed(false)
       if(generation===this.epoch&&!this.closed){
-        try{await this.fail(task.id,created?'interrupted':'failed',
-          err(e)+'；'+(created?(submitted?'命令可能已提交':'Session 已创建'):'Session 创建未确认')+'，请手工核实')}
+        // U07 (design §8.4): classify by persisted phase evidence; a Session created locally but
+        // never durably recorded still counts as "created" — its orphan must be handled, B2.
+        const cls=phase==='command_submitted'
+          ?new QueueError('SUBMISSION_UNKNOWN','命令提交状态未知，保守处理，不会自动重发').message
+          :created||phase==='session_created'||phase==='model_confirmed'
+            ?'会话已创建、命令未提交，需处置原会话'
+            :'已确认未提交，可修改后重新排队'
+        const status=created||phase!=='claimed'&&phase!=='precheck'?'interrupted':'failed'
+        try{await this.fail(task.id,status,err(e)+'；'+cls)}
         catch(p){this.quarantine('任务失败状态保存失败：'+err(p))}
       }
     }

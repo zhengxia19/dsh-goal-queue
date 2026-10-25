@@ -6,6 +6,9 @@ import type { SessionFace } from '@deepseek-ai/dsh-api-session-controller/client
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { sameModel, type TaskModelSelection } from '../model-policy.ts'
 
+// design §9: the dispatch phase domain (Task/Attempt optional fields live in queue.ts).
+export type { AttemptPhase, DispatchPhase } from '../queue.ts'
+
 export interface TaskModels {
   catalog(): Promise<ModelCatalog>
   select(sessionId: SessionId, selection: TaskModelSelection): Promise<TaskModelSelection>

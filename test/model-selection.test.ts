@@ -9,10 +9,10 @@ import {TEST_MODEL,TEST_CATALOG} from './model-fixture.ts'
 test('task selection survives CAS-shaped JSON roundtrip, edit, recovery and legacy decoding',()=>{
   let q=add(EMPTY_QUEUE,{title:'',prompt:'work',workspaceId:'ws',goalMode:true,modelSelection:TEST_MODEL},'a')
   assert.deepEqual(decode(JSON.parse(JSON.stringify({version:1,queue:q})))?.queue.tasks[0]?.modelSelection,TEST_MODEL)
-  q=claim({...q,enabled:true},'a');q=setTaskModel(q,'a',TEST_MODEL)
+  q=claim({...q,enabled:true},'a');q=setTaskModel(q,'a',TEST_MODEL,'precheck')
   assert.deepEqual(recover(q).tasks[0]?.modelSelection,TEST_MODEL)
   assert.throws(()=>updateActive(q,'a',{modelSelection:TEST_MODEL}),/身份/)
-  assert.throws(()=>setTaskModel({...q,tasks:[{...q.tasks[0]!,sessionId:'existing'}]},'a',TEST_MODEL),/已有 Session/)
+  assert.throws(()=>setTaskModel({...q,tasks:[{...q.tasks[0]!,sessionId:'existing'}]},'a',TEST_MODEL,'precheck'),/已有 Session/)
   const legacy=add(EMPTY_QUEUE,{title:'',prompt:'work',workspaceId:'ws',goalMode:true},'old')
   assert.equal(decode({version:1,queue:legacy})?.queue.tasks[0]?.modelSelection,undefined)
   assert.equal(decode({version:1,queue:{...legacy,tasks:[{...legacy.tasks[0],modelSelection:{provider:'p'}}]}}),undefined)

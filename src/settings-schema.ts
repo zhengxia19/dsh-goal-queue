@@ -21,6 +21,8 @@ export const queueSchema = z.object({
       sessionId: z.union([z.string(), z.const(undefined)]), goalId: z.union([z.string(), z.const(undefined)]),
       seenRunning: z.union([z.boolean(), z.const(undefined)]), detail: z.union([z.string(), z.const(undefined)]),
       titleError: z.union([z.string(), z.const(undefined)]),
+      // U07: task-level phase mirror (attempt-level phase validated below).
+      phase:z.union([...PHASES.map(p=>z.const(p)),z.const(undefined)]),
       attempts: z.union([z.array(z.object({
         id:z.string(),status:z.union([...STATES]),
         sessionId:z.union([z.string(),z.const(undefined)]),

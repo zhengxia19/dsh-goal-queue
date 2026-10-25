@@ -6,7 +6,10 @@ export type TaskStatus = 'pending'|'starting'|'running'|'completed'|'blocked'|'f
 export type TaskSource = 'queue'|'discovered'
 /** U07 dispatch phases; U06's provability check reads them. Undefined = legacy, never fabricated. */
 export type AttemptPhase = 'claimed'|'precheck'|'session_created'|'model_confirmed'|'command_submitted'
+/** design §4 authoritative name for the same phase domain. */
+export type DispatchPhase = AttemptPhase
 export const PHASES: readonly AttemptPhase[] = ['claimed','precheck','session_created','model_confirmed','command_submitted']
+const PHASE_INDEX: ReadonlyMap<AttemptPhase, number> = new Map(PHASES.map((p, i) => [p, i]))
 export interface TaskAttempt {
   id:string; status:TaskStatus; sessionId?:string; goalId?:string;
   seenRunning?:boolean; detail?:string; createdAt:number; updatedAt:number
@@ -27,6 +30,8 @@ export interface Task {
   titleError?: string
   /** U01: identity/boundary needs manual review; status stays untouched. */
   needsReview?: boolean
+  /** U07 (design §4): mirror of the current attempt's dispatch phase; absent for legacy. */
+  phase?: DispatchPhase
 }
 export type TaskInput = Pick<Task,'title'|'workspaceId'|'prompt'|'goalMode'> & Partial<Pick<Task,'generateTitle'|'titleMaxChars'|'modelSelection'>>
 export interface QueueState {
@@ -83,6 +88,14 @@ function amendAttempt(t:Task,patch:Partial<Task>,now:number):Task{
     seenRunning:out.seenRunning,detail:out.detail,updatedAt:now
   }]}
 }
+/** U07: advance the attempt phase and its task mirror on one state copy; never downgrade within one attempt. */
+function applyPhase(t:Task,phase:DispatchPhase):Task{
+  const attempts=attemptsOf(t)
+  const last=attempts[attempts.length-1]
+  if(last===undefined)return {...t,phase}
+  if(last.phase!==undefined&&PHASE_INDEX.get(phase)!<PHASE_INDEX.get(last.phase)!)return t
+  return {...t,phase,attempts:[...attempts.slice(0,-1),{...last,phase}]}
+}
 export function decode(value:unknown):QueueSettings|undefined {
   if(!object(value)||value.version!==VERSION||!object(value.queue))return
   const q=value.queue
@@ -111,6 +124,7 @@ export function decode(value:unknown):QueueSettings|undefined {
       ||(raw.detail!==undefined&&typeof raw.detail!=='string')
       ||(raw.titleError!==undefined&&typeof raw.titleError!=='string')
       ||(raw.needsReview!==undefined&&typeof raw.needsReview!=='boolean')
+      ||(raw.phase!==undefined&&!PHASES.includes(raw.phase as AttemptPhase))
       ||(raw.attempts!==undefined&&!validAttempts(raw.attempts)))return
     if(typeof raw.sessionId==='string'){
       if(sessionIds.has(raw.sessionId))return
@@ -208,15 +222,16 @@ export function claim(q:QueueState,id:string,now=Date.now()):QueueState{
     // U05: a title warning belongs to the attempt that produced it; archive it before the new run.
     const archived=t.titleError===undefined||!attempts.length?attempts
       :attempts.map((a,i)=>i===attempts.length-1?{...a,titleError:t.titleError}:a)
-    return {...t,status:'starting',updatedAt:now,titleError:undefined,attempts:[...archived,{
+    return {...t,status:'starting',updatedAt:now,titleError:undefined,phase:'claimed' as const,attempts:[...archived,{
       id:t.id+':attempt:'+(attempts.length+1),status:'starting' as const,
+      phase:'claimed' as const,
       createdAt:now,updatedAt:now
     }]}
   })},[...q.activeIds,id])
 }
 export function updateActive(q:QueueState,id:string,patch:Partial<Task>,now=Date.now()):QueueState{
   if(!q.activeIds.includes(id))throw Error('当前任务执行权已经失效')
-  const forbidden=['id','workspaceId','title','prompt','goalMode','generateTitle','titleMaxChars','modelSelection','createdAt','source']
+  const forbidden=['id','workspaceId','title','prompt','goalMode','generateTitle','titleMaxChars','modelSelection','createdAt','source','phase']
   if(forbidden.some(k=>Object.prototype.hasOwnProperty.call(patch,k)))throw Error('不允许修改执行中任务身份')
   if(patch.sessionId&&q.tasks.some(t=>t.id!==id&&t.sessionId===patch.sessionId))throw Error('Session 已归属其他任务')
   const {status,...rest}=patch
@@ -242,17 +257,31 @@ export function releaseUnsubmittedClaim(q:QueueState,id:string):QueueState{
         ?attempts.slice(0,-1):attempts}
   })},q.activeIds.filter(x=>x!==id))
 }
-export function setSessionId(q:QueueState,id:string,sessionId:string):QueueState{
+export function setSessionId(q:QueueState,id:string,sessionId:string,phase:DispatchPhase,now=Date.now()):QueueState{
   if(!q.activeIds.includes(id))throw Error('当前任务执行权已失效')
   if(q.tasks.some(t=>t.id!==id&&t.sessionId===sessionId))throw Error('Session 已归属另一任务')
-  return {...q,tasks:q.tasks.map(t=>t.id===id?amendAttempt(t,{sessionId},Date.now()):t)}
+  if(!PHASES.includes(phase))throw Error('非法派发阶段')
+  // U07: the Session ID and its phase land in the same CAS — a lost write can never split them.
+  return {...q,tasks:q.tasks.map(t=>t.id===id?applyPhase(amendAttempt(t,{sessionId},now),phase):t)}
 }
 /** Freeze a resolved route in the same CAS as the active task; never retarget an existing Session. */
-export function setTaskModel(q:QueueState,id:string,modelSelection:TaskModelSelection):QueueState{
+export function setTaskModel(q:QueueState,id:string,modelSelection:TaskModelSelection,phase:DispatchPhase,now=Date.now()):QueueState{
   const task=q.tasks.find(t=>t.id===id)
   if(!task||!q.activeIds.includes(id)||task.status!=='starting'||task.sessionId)throw Error('不能修改已有 Session 的任务模型')
   if(!isModelSelection(modelSelection))throw Error('任务模型配置无效')
-  return {...q,tasks:q.tasks.map(t=>t.id===id?{...t,modelSelection:{...modelSelection},updatedAt:Date.now()}:t)}
+  if(!PHASES.includes(phase))throw Error('非法派发阶段')
+  // U07: model resolution and the 'precheck' phase persist in one CAS; a crash between them is impossible.
+  return {...q,tasks:q.tasks.map(t=>t.id===id?applyPhase({...t,modelSelection:{...modelSelection},updatedAt:now},phase):t)}
+}
+/** U07: durable proof that the Session model was confirmed before the task command was submitted. */
+export function markModelConfirmed(q:QueueState,id:string,now=Date.now()):QueueState{
+  if(!q.activeIds.includes(id))throw Error('当前任务执行权已失效')
+  return {...q,tasks:q.tasks.map(t=>t.id===id?{...applyPhase(t,'model_confirmed'),updatedAt:now}:t)}
+}
+/** U07: write BEFORE submitting the task command — the proof that submission may be unknown (B1). */
+export function markCommandSubmitted(q:QueueState,id:string,now=Date.now()):QueueState{
+  if(!q.activeIds.includes(id))throw Error('当前任务执行权已失效')
+  return {...q,tasks:q.tasks.map(t=>t.id===id?{...applyPhase(t,'command_submitted'),updatedAt:now}:t)}
 }
 export function recover(q:QueueState,reason='应用重新启动，旧会话等待核实'):QueueState{
   if(!q.enabled&&!q.activeIds.length&&!q.sessionActivity.length)return q
