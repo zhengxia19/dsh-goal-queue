@@ -67,8 +67,8 @@
 | M9 | T9.2 `board-interactions.test.ts` 补 U08 断言（0.25d） | 工程师 | P1 | D22 | D22 | 完成 |
 | **QA P1b** | QA-3 P1b 段复测（U06/U07/U08 链）（0.5d） | 质量QA | P1 | D23 | D23 | 待办 |
 | **M10 U09 标题三模式（B4）** | | | | | | |
-| M10 | T10.1 `QueueBoard.tsx` 单选留空/手动/AI；`settings.ts`/`title-policy.ts` 映射 none/manual→`generateTitle=false`；草稿保留；`titleMaxChars` 入高级选项；缺标题「未命名任务/未命名目标」（0.75d） | 工程师 | P2 | D24 | D24 | 待办 |
-| M10 | T10.2 `board-interactions.test.ts` 补标题三模式草稿断言；验证默认请求次数不增加（0.25d） | 工程师 | P2 | D24 | D24 | 待办 |
+| M10 | T10.1 `QueueBoard.tsx` 单选留空/手动/AI；`settings.ts`/`title-policy.ts` 映射 none/manual→`generateTitle=false`；草稿保留；`titleMaxChars` 入高级选项；缺标题「未命名任务/未命名目标」（0.75d） | 工程师 | P2 | D24 | D24 | 完成（映射在表单构造处：`generateTitle:titleMode==='ai'`；settings.ts 无标题逻辑无需改；title-policy 复用 DEFAULT/MIN/MAX 常量） |
+| M10 | T10.2 `board-interactions.test.ts` 补标题三模式草稿断言；验证默认请求次数不增加（0.25d） | 工程师 | P2 | D24 | D24 | 完成 |
 | **M11 U10 表单顺序与局部错误** | | | | | | |
 | M11 | T11.1 表单顺序：任务说明→工作区→执行方式→模型与推理→标题→高级；错误内联 formErrors；模型副作用一行提示；实现术语入 details（0.5d） | 工程师 | P2 | D25 | D25 | 待办 |
 | M11 | T11.2 `board-interactions.test.ts` 补表单错误定位断言（0.25d） | 工程师 | P2 | D25 | D25 | 待办 |

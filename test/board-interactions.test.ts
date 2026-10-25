@@ -171,3 +171,24 @@ test('U08: the form never guesses a workspace; the save button speaks the queue 
   // The old bare 保存 label must not return.
   assert.ok(!src.includes(":'保存'}"),'the unqualified save label is retired')
 })
+test('U09: one title control with three modes; the default never adds a model request',()=>{
+  const src=readFileSync(new URL('../src/client/QueueBoard.tsx',import.meta.url),'utf8')
+  // Three radio modes; the default is no extra generation (B4: request count does not grow).
+  for(const phrase of ['留空（不额外生成，不增加模型请求）','手动填写','AI 生成（一次额外模型请求）'])
+    assert.ok(src.includes(phrase),'title mode radios must contain: '+phrase)
+  assert.match(src,/useState<'none'\|'manual'\|'ai'>\('none'\)/,'the form state starts at none')
+  assert.match(src,/newForm[^]*?setTitleMode\('none'\)/,'new forms default to no extra generation')
+  // The old checkbox flow discarded the manual draft on enable; mode switches must not.
+  assert.ok(!src.includes('checked={generateTitle}'),'the old checkbox flow is retired')
+  assert.ok(!src.includes("if(e.target.checked)setTitle('')"),'mode switches never discard the manual draft')
+  assert.ok(!src.includes('setGenerateTitle'),'no parallel UI boolean beside the mode')
+  // none/manual persist generateTitle=false; only ai persists true — no second persisted state.
+  assert.ok(src.includes("generateTitle:titleMode==='ai'"),'only ai maps generateTitle=true')
+  assert.ok(src.includes("title:titleMode==='manual'?title:''"),'none and manual never send an ai title')
+  // AI length lives in the advanced-options disclosure, labelled as one extra request.
+  assert.ok(src.includes('<details className="gq-advanced"><summary>高级选项</summary>'),'advanced options disclosure exists')
+  assert.ok(src.includes('AI 标题最长字符数（一次额外模型请求）'),'titleMaxChars moved into advanced options')
+  // Missing titles read as 未命名目标/未命名任务; stale auto-title waiting copy is gone everywhere.
+  assert.ok(src.includes("task.title || (task.goalMode ? '未命名目标' : '未命名任务')"),'missing title display per design §U09')
+  assert.ok(!src.includes('等待 DSH 自动生成标题')&&!src.includes('未命名目标任务'),'stale title placeholders must not return')
+})
